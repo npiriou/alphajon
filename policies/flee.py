@@ -96,3 +96,19 @@ class ModelPolicy(GamePolicy):
         obs = extract_flee_observation(state["player"], state["game"])
         p = sigmoid(float(obs @ self.weights + self.bias))
         return FLEE_ACTION_ATTEMPT if p >= self.threshold else FLEE_ACTION_CONTINUE
+
+
+class StableBaselinesFleePolicy(GamePolicy):
+    def __init__(self, model_path, deterministic=True):
+        from stable_baselines3 import PPO
+
+        self.model = PPO.load(model_path, device="cpu")
+        self.deterministic = deterministic
+
+    def decide_flee(self, state, legal_actions):
+        if FLEE_ACTION_ATTEMPT not in legal_actions:
+            return FLEE_ACTION_CONTINUE
+        obs = extract_flee_observation(state["player"], state["game"])
+        action, _ = self.model.predict(obs, deterministic=self.deterministic)
+        action = int(action)
+        return action if action in legal_actions else FLEE_ACTION_CONTINUE

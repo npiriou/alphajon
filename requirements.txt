@@ -1,3 +1,6 @@
 pandas
 numpy
 tqdm
+gymnasium
+stable-baselines3
+torch

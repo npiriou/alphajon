@@ -6,6 +6,7 @@ from .flee import (
     RandomPolicy,
     ScriptedPolicy,
     ModelPolicy,
+    StableBaselinesFleePolicy,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "RandomPolicy",
     "ScriptedPolicy",
     "ModelPolicy",
+    "StableBaselinesFleePolicy",
 ]

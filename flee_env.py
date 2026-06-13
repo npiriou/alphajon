@@ -140,12 +140,16 @@ class FleeEnv:
 
     def _reward(self):
         joueur = self.terminal_players[self.controlled_seat]
-        reward = 1.0 if joueur is self.vainqueur else 0.0
+        reward = 2.0 if joueur is self.vainqueur else -0.5
         if not joueur.vivant:
             reward -= 1.0
         else:
-            reward += 0.1
-        reward += 0.02 * joueur.score_final
+            reward += 0.05
+        reward += 0.05 * joueur.score_final
+        if joueur.fuite_reussie and joueur is not self.vainqueur:
+            reward -= 0.4
         if joueur.fuite_reussie and joueur.score_final <= 2:
-            reward -= 0.05
+            reward -= 0.3
+        if joueur.dans_le_dj:
+            reward += 0.2
         return float(reward)

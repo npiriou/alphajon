@@ -8,7 +8,7 @@ from heros import persos_disponibles
 from joueurs import Joueur
 from monstres import DonjonDeck
 from objets import objets_disponibles
-from policies import HeuristicPolicy, ModelPolicy, RandomPolicy
+from policies import HeuristicPolicy, ModelPolicy, RandomPolicy, StableBaselinesFleePolicy
 from simu import ordonnanceur
 
 
@@ -21,6 +21,8 @@ def make_policy(name):
         return RandomPolicy(0.5)
     if name.startswith("model:"):
         return ModelPolicy(name.split(":", 1)[1])
+    if name.startswith("ppo:"):
+        return StableBaselinesFleePolicy(name.split(":", 1)[1])
     raise ValueError(f"unknown policy {name}")
 
 

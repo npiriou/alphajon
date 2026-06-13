@@ -14,6 +14,7 @@ from policies import (
     HeuristicPolicy,
     CombinedPolicy,
     NumpyBreakPolicy,
+    NumpyItemActivationPolicy,
     ModelPolicy,
     NumpyPPOFleePolicy,
     NumpyReplayPolicy,
@@ -41,15 +42,19 @@ def make_policy(name):
         return NumpyReplayPolicy(name.split(":", 1)[1])
     if name.startswith("breakmodel:"):
         return NumpyBreakPolicy(name.split(":", 1)[1])
+    if name.startswith("itemmodel:"):
+        return NumpyItemActivationPolicy(name.split(":", 1)[1])
     if name.startswith("combined:"):
         parts = name.split(":", 1)[1].split(",")
-        if len(parts) != 3:
-            raise ValueError("combined policy must be combined:flee_path,replay_path,break_path")
-        flee_path, replay_path, break_path = parts
+        if len(parts) not in (3, 4):
+            raise ValueError("combined policy must be combined:flee_path,replay_path,break_path[,item_path]")
+        flee_path, replay_path, break_path = parts[:3]
+        item_policy = NumpyItemActivationPolicy(parts[3]) if len(parts) == 4 else None
         return CombinedPolicy(
             flee_policy=NumpyPPOFleePolicy(flee_path),
             replay_policy=NumpyReplayPolicy(replay_path),
             break_policy=NumpyBreakPolicy(break_path),
+            item_policy=item_policy,
         )
     if name.startswith("ppo:"):
         return StableBaselinesFleePolicy(name.split(":", 1)[1])
@@ -71,6 +76,8 @@ def empty_stats(policy_names):
             "replay_decisions": 0,
             "replay_draws": 0,
             "break_decisions": 0,
+            "item_activation_decisions": 0,
+            "item_activations": 0,
             "score": 0.0,
             "score_values": [],
         }
@@ -113,6 +120,8 @@ def _run_benchmark_with_cache(policy_names, games, seed_start, policy_cache, gam
             s["replay_decisions"] += getattr(j, "replay_decisions", 0)
             s["replay_draws"] += getattr(j, "replay_draws", 0)
             s["break_decisions"] += getattr(j, "break_decisions", 0)
+            s["item_activation_decisions"] += getattr(j, "item_activation_decisions", 0)
+            s["item_activations"] += getattr(j, "item_activations", 0)
             score = float(j.score_final if getattr(j, "compte_au_score", False) else 0.0)
             s["score"] += score
             s["score_values"].append(score)
@@ -180,7 +189,7 @@ def pct_ci(success, n):
 def print_stats(stats):
     print(
         f"{'Policy':<18} {'Played':>8} {'Win%':>12} {'Death%':>8} {'Flee%':>8} "
-        f"{'Clear%':>8} {'Draw%':>8} {'Breaks':>8} {'AvgScore':>9} {'MedScore':>9}"
+        f"{'Clear%':>8} {'Draw%':>8} {'Breaks':>8} {'Use%':>8} {'AvgScore':>9} {'MedScore':>9}"
     )
     for name, s in stats.items():
         n = max(1, s["played"])
@@ -188,11 +197,13 @@ def print_stats(stats):
         scores = sorted(s["score_values"])
         median = scores[len(scores) // 2] if scores else 0.0
         draw_n = max(1, s["replay_decisions"])
+        use_n = max(1, s["item_activation_decisions"])
         print(
             f"{name:<18} {s['played']:>8} {win:>7.2f}+/-{win_ci:<4.2f} "
             f"{s['death']/n*100:>8.2f} {s['fled']/n*100:>8.2f} "
             f"{s['cleared']/n*100:>8.2f} {s['replay_draws']/draw_n*100:>8.2f} "
-            f"{s['break_decisions']/n:>8.3f} {s['score']/n:>9.3f} {median:>9.3f}"
+            f"{s['break_decisions']/n:>8.3f} {s['item_activations']/use_n*100:>8.2f} "
+            f"{s['score']/n:>9.3f} {median:>9.3f}"
         )
 
 

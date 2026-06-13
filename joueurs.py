@@ -61,6 +61,8 @@ class Joueur:
         self.replay_decisions = 0
         self.replay_draws = 0
         self.break_decisions = 0
+        self.item_activation_decisions = 0
+        self.item_activations = 0
         self.doit_passer = False # a trigger un effet qui le force a passer
         self.passe_son_tour = False # saute completement son tour sans piocher (Lapin Blanc)
         self.monstres_ajoutes_ce_tour = 0

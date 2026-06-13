@@ -139,7 +139,23 @@ class Objet:
     
 
     def en_combat(self, joueur, carte, Jeu, log_details):
-        if self.condition(joueur, carte, Jeu, log_details):
+        if self.intact and self.rules(joueur, carte, Jeu, log_details):
+            joueur.item_activation_decisions += 1
+            policy = getattr(joueur, 'policy', None)
+            if policy is not None:
+                action = policy.choose_item_activation({
+                    'player': joueur,
+                    'game': Jeu,
+                    'card': carte,
+                    'item': self,
+                    'hook': 'en_combat',
+                    'log_details': log_details,
+                }, (0, 1))
+                if int(action) != 1:
+                    return
+            elif not self.worthit(joueur, carte, Jeu, log_details):
+                return
+            joueur.item_activations += 1
             try:
                 self.combat_effet(joueur, carte, Jeu, log_details)
             except ExecutionImpossible:

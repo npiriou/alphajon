@@ -6,6 +6,7 @@ import numpy as np
 from .flee_features import extract_flee_observation, observation_size, sigmoid
 from .replay_features import extract_replay_observation, observation_size as replay_observation_size
 from .break_features import MAX_OBJECTS, extract_break_observation, observation_size as break_observation_size
+from .item_features import extract_item_activation_observation, observation_size as item_observation_size
 
 FLEE_ACTION_CONTINUE = 0
 FLEE_ACTION_ATTEMPT = 1
@@ -55,12 +56,16 @@ class HeuristicPolicy(GamePolicy):
             return legal_actions[0] if legal_actions else 0
         return state["player"].objets.index(objet)
 
+    def choose_item_activation(self, state, legal_actions):
+        return 1 if 1 in legal_actions else legal_actions[0]
+
 
 class CombinedPolicy(GamePolicy):
-    def __init__(self, flee_policy=None, replay_policy=None, break_policy=None):
+    def __init__(self, flee_policy=None, replay_policy=None, break_policy=None, item_policy=None):
         self.flee_policy = flee_policy or HeuristicPolicy("ev")
         self.replay_policy = replay_policy or HeuristicPolicy("ev")
         self.break_policy = break_policy or HeuristicPolicy("ev")
+        self.item_policy = item_policy or HeuristicPolicy("ev")
 
     def decide_flee(self, state, legal_actions):
         return self.flee_policy.decide_flee(state, legal_actions)
@@ -70,6 +75,9 @@ class CombinedPolicy(GamePolicy):
 
     def choose_item_to_break(self, state, legal_actions):
         return self.break_policy.choose_item_to_break(state, legal_actions)
+
+    def choose_item_activation(self, state, legal_actions):
+        return self.item_policy.choose_item_activation(state, legal_actions)
 
 
 class RandomPolicy(GamePolicy):
@@ -94,6 +102,9 @@ class RandomPolicy(GamePolicy):
     def choose_item_to_break(self, state, legal_actions):
         return self.rng.choice(list(legal_actions)) if legal_actions else 0
 
+    def choose_item_activation(self, state, legal_actions):
+        return self.rng.choice(list(legal_actions)) if legal_actions else 0
+
 
 class ScriptedPolicy(GamePolicy):
     def __init__(self, actions, fallback=None):
@@ -115,6 +126,9 @@ class ScriptedPolicy(GamePolicy):
 
     def choose_item_to_break(self, state, legal_actions):
         return self.fallback.choose_item_to_break(state, legal_actions)
+
+    def choose_item_activation(self, state, legal_actions):
+        return self.fallback.choose_item_activation(state, legal_actions)
 
 
 class ModelPolicy(GamePolicy):
@@ -147,6 +161,9 @@ class ModelPolicy(GamePolicy):
 
     def choose_item_to_break(self, state, legal_actions):
         return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)
+
+    def choose_item_activation(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_activation(state, legal_actions)
 
 
 class NumpyPPOFleePolicy(GamePolicy):
@@ -184,6 +201,9 @@ class NumpyPPOFleePolicy(GamePolicy):
     def choose_item_to_break(self, state, legal_actions):
         return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)
 
+    def choose_item_activation(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_activation(state, legal_actions)
+
 
 class NumpyReplayPolicy(NumpyPPOFleePolicy):
     def __init__(self, model_path, flee_policy=None):
@@ -220,6 +240,9 @@ class NumpyReplayPolicy(NumpyPPOFleePolicy):
 
     def choose_item_to_break(self, state, legal_actions):
         return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)
+
+    def choose_item_activation(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_activation(state, legal_actions)
 
 
 class NumpyBreakPolicy(GamePolicy):
@@ -262,6 +285,53 @@ class NumpyBreakPolicy(GamePolicy):
                 masked[int(action)] = logits[int(action)]
         return int(np.argmax(masked))
 
+    def choose_item_activation(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_activation(state, legal_actions)
+
+
+class NumpyItemActivationPolicy(GamePolicy):
+    def __init__(self, model_path, flee_policy=None, replay_policy=None, break_policy=None):
+        with open(model_path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        self.layers = [
+            (
+                np.asarray(layer["weight"], dtype=np.float32),
+                np.asarray(layer["bias"], dtype=np.float32),
+            )
+            for layer in payload["policy_layers"]
+        ]
+        self.action_weight = np.asarray(payload["action_weight"], dtype=np.float32)
+        self.action_bias = np.asarray(payload["action_bias"], dtype=np.float32)
+        self.flee_policy = flee_policy or HeuristicPolicy("ev")
+        self.replay_policy = replay_policy or HeuristicPolicy("ev")
+        self.break_policy = break_policy or HeuristicPolicy("ev")
+        if self.layers[0][0].shape[1] != item_observation_size():
+            raise ValueError(
+                f"model expects {self.layers[0][0].shape[1]} features, "
+                f"got {item_observation_size()}"
+            )
+
+    def decide_flee(self, state, legal_actions):
+        return self.flee_policy.decide_flee(state, legal_actions)
+
+    def decide_replay(self, state, legal_actions):
+        return self.replay_policy.decide_replay(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        return self.break_policy.choose_item_to_break(state, legal_actions)
+
+    def choose_item_activation(self, state, legal_actions):
+        if 1 not in legal_actions:
+            return legal_actions[0] if legal_actions else 0
+        x = extract_item_activation_observation(
+            state["player"], state["game"], state["item"], state["card"], state.get("hook", "")
+        )
+        for weight, bias in self.layers:
+            x = np.tanh(weight @ x + bias)
+        logits = self.action_weight @ x + self.action_bias
+        action = int(np.argmax(logits))
+        return action if action in legal_actions else 0
+
 
 class StableBaselinesFleePolicy(GamePolicy):
     def __init__(self, model_path, deterministic=True):
@@ -283,3 +353,6 @@ class StableBaselinesFleePolicy(GamePolicy):
 
     def choose_item_to_break(self, state, legal_actions):
         return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)
+
+    def choose_item_activation(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_activation(state, legal_actions)

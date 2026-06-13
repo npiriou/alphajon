@@ -11,6 +11,7 @@ from .flee import (
     ModelPolicy,
     NumpyPPOFleePolicy,
     NumpyBreakPolicy,
+    NumpyItemActivationPolicy,
     NumpyReplayPolicy,
     StableBaselinesFleePolicy,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "ModelPolicy",
     "NumpyPPOFleePolicy",
     "NumpyBreakPolicy",
+    "NumpyItemActivationPolicy",
     "NumpyReplayPolicy",
     "StableBaselinesFleePolicy",
 ]

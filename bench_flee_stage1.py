@@ -78,6 +78,8 @@ def empty_stats(policy_names):
             "break_decisions": 0,
             "item_activation_decisions": 0,
             "item_activations": 0,
+            "item_hook_decisions": {},
+            "item_hook_activations": {},
             "score": 0.0,
             "score_values": [],
         }
@@ -122,6 +124,10 @@ def _run_benchmark_with_cache(policy_names, games, seed_start, policy_cache, gam
             s["break_decisions"] += getattr(j, "break_decisions", 0)
             s["item_activation_decisions"] += getattr(j, "item_activation_decisions", 0)
             s["item_activations"] += getattr(j, "item_activations", 0)
+            for hook, count in getattr(j, "item_hook_decisions", {}).items():
+                s["item_hook_decisions"][hook] = s["item_hook_decisions"].get(hook, 0) + count
+            for hook, count in getattr(j, "item_hook_activations", {}).items():
+                s["item_hook_activations"][hook] = s["item_hook_activations"].get(hook, 0) + count
             score = float(j.score_final if getattr(j, "compte_au_score", False) else 0.0)
             s["score"] += score
             s["score_values"].append(score)
@@ -140,6 +146,9 @@ def merge_stats(dest, src):
         for key, value in values.items():
             if key == "score_values":
                 d[key].extend(value)
+            elif key in ("item_hook_decisions", "item_hook_activations"):
+                for hook, count in value.items():
+                    d[key][hook] = d[key].get(hook, 0) + count
             else:
                 d[key] += value
 
@@ -205,6 +214,14 @@ def print_stats(stats):
             f"{s['break_decisions']/n:>8.3f} {s['item_activations']/use_n*100:>8.2f} "
             f"{s['score']/n:>9.3f} {median:>9.3f}"
         )
+        hook_decisions = s.get("item_hook_decisions", {})
+        if hook_decisions:
+            parts = []
+            for hook in sorted(hook_decisions):
+                decisions = hook_decisions[hook]
+                activations = s.get("item_hook_activations", {}).get(hook, 0)
+                parts.append(f"{hook}={activations}/{decisions} ({activations / max(1, decisions) * 100:.1f}%)")
+            print(f"{'':<18} item hooks: " + ", ".join(parts))
 
 
 def main():

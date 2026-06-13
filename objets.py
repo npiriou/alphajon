@@ -24,6 +24,58 @@ def nb_couleurs(objets, intacts_seulement=False):
     return len({o.couleur for o in objets
                 if o.couleur and (o.intact or not intacts_seulement)})
 
+ITEM_HOOK_OPTIONAL_ACTIVATION = "optional_activation"
+ITEM_HOOK_PASSIVE = "passive"
+ITEM_HOOK_MANDATORY = "mandatory"
+ITEM_HOOK_TARGET_CHOICE = "target_choice"
+ITEM_HOOK_DISCARD_CHOICE = "discard_choice"
+ITEM_HOOK_REPAIR_CHOICE = "repair_choice"
+ITEM_HOOK_REPLACE_CHOICE = "replace_choice"
+ITEM_HOOK_ROLL_CHOICE = "roll_choice"
+ITEM_HOOK_RANDOM_NO_DECISION = "random_no_decision"
+
+
+ITEM_HOOK_DEFAULT_CLASSIFICATIONS = {
+    "en_combat": ITEM_HOOK_OPTIONAL_ACTIVATION,
+    "en_survie": ITEM_HOOK_OPTIONAL_ACTIVATION,
+    "en_roll": ITEM_HOOK_RANDOM_NO_DECISION,
+    "en_rencontre": ITEM_HOOK_PASSIVE,
+    "en_rencontre_event": ITEM_HOOK_PASSIVE,
+    "en_vaincu": ITEM_HOOK_PASSIVE,
+    "en_subit_dommages": ITEM_HOOK_PASSIVE,
+    "en_activated": ITEM_HOOK_PASSIVE,
+    "en_mort": ITEM_HOOK_PASSIVE,
+    "en_fuite_definitive": ITEM_HOOK_PASSIVE,
+    "en_fuite": ITEM_HOOK_PASSIVE,
+    "debut_tour": ITEM_HOOK_PASSIVE,
+    "fin_tour": ITEM_HOOK_PASSIVE,
+}
+
+
+def classify_item_hook(item_or_class, hook):
+    cls = item_or_class if isinstance(item_or_class, type) else type(item_or_class)
+    overrides = getattr(cls, "item_hook_classifications", {})
+    return overrides.get(hook, ITEM_HOOK_DEFAULT_CLASSIFICATIONS.get(hook, ITEM_HOOK_PASSIVE))
+
+
+def _ensure_item_hook_counters(joueur):
+    if not hasattr(joueur, "item_hook_decisions"):
+        joueur.item_hook_decisions = {}
+    if not hasattr(joueur, "item_hook_activations"):
+        joueur.item_hook_activations = {}
+
+
+def _record_item_activation_decision(joueur, hook):
+    joueur.item_activation_decisions += 1
+    _ensure_item_hook_counters(joueur)
+    joueur.item_hook_decisions[hook] = joueur.item_hook_decisions.get(hook, 0) + 1
+
+
+def _record_item_activation_use(joueur, hook):
+    joueur.item_activations += 1
+    _ensure_item_hook_counters(joueur)
+    joueur.item_hook_activations[hook] = joueur.item_hook_activations.get(hook, 0) + 1
+
 class ExecutionImpossible(Exception):
     """Levee quand un objet tente d'executer une carte non executable (Troll).
     Attrapee dans Objet.en_combat : l'objet n'est pas consomme, le combat continue."""
@@ -140,7 +192,7 @@ class Objet:
 
     def en_combat(self, joueur, carte, Jeu, log_details):
         if self.intact and self.rules(joueur, carte, Jeu, log_details):
-            joueur.item_activation_decisions += 1
+            _record_item_activation_decision(joueur, 'en_combat')
             policy = getattr(joueur, 'policy', None)
             if policy is not None:
                 action = policy.choose_item_activation({
@@ -155,7 +207,7 @@ class Objet:
                     return
             elif not self.worthit(joueur, carte, Jeu, log_details):
                 return
-            joueur.item_activations += 1
+            _record_item_activation_use(joueur, 'en_combat')
             try:
                 self.combat_effet(joueur, carte, Jeu, log_details)
             except ExecutionImpossible:
@@ -170,7 +222,7 @@ class Objet:
     
     def en_survie(self, joueur, carte, Jeu, log_details):
         if self.intact:
-            joueur.item_activation_decisions += 1
+            _record_item_activation_decision(joueur, 'en_survie')
             policy = getattr(joueur, 'policy', None)
             if policy is not None:
                 action = policy.choose_item_activation({
@@ -183,7 +235,7 @@ class Objet:
                 }, (0, 1))
                 if int(action) != 1:
                     return
-            joueur.item_activations += 1
+            _record_item_activation_use(joueur, 'en_survie')
             self.survie_effet(joueur, carte, Jeu, log_details)
 
     def en_score(self, joueur, log_details):

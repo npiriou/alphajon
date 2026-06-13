@@ -57,7 +57,20 @@ class HeuristicPolicy(GamePolicy):
         return state["player"].objets.index(objet)
 
     def choose_item_activation(self, state, legal_actions):
-        return 1 if 1 in legal_actions else legal_actions[0]
+        if 1 not in legal_actions:
+            return legal_actions[0] if legal_actions else 0
+        hook = state.get("hook", "")
+        if hook == "en_survie":
+            return 1
+        if hook == "en_combat":
+            item = state["item"]
+            return 1 if item.worthit(
+                state["player"],
+                state["card"],
+                state["game"],
+                state.get("log_details", []),
+            ) else 0
+        return 0
 
 
 class CombinedPolicy(GamePolicy):

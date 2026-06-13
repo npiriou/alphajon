@@ -193,9 +193,14 @@ picks.
 Current learned coverage:
 
 - `en_combat`: 172 item classes routed through `choose_item_activation`;
-- `en_survie`: 11 item classes routed through `choose_item_activation`;
+- `en_survie`: 10 item classes routed through `choose_item_activation`
+  in the current item registry;
 - survival labels currently preserve baseline behavior by treating survival
   activation as "use".
+- `item_hook_coverage.py` generates the Stage 4 coverage report from the live
+  item registry and classifies every implemented hook.
+- `bench_flee_stage1.py` now reports activation decisions and use rates by hook
+  in addition to aggregate `Use%`.
 
 Missing item decision surfaces:
 
@@ -256,6 +261,12 @@ Tasks:
   - target choice;
   - replacement/discard/repair choice;
   - random effect with no player decision.
+- Generate the current coverage report with:
+
+```bash
+python item_hook_coverage.py
+```
+
 - Add explicit policy methods only where the player has agency. Likely methods:
   - `choose_item_activation`;
   - `choose_repair_target`;

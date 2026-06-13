@@ -4,9 +4,12 @@ import random
 import numpy as np
 
 from .flee_features import extract_flee_observation, observation_size, sigmoid
+from .replay_features import extract_replay_observation, observation_size as replay_observation_size
 
 FLEE_ACTION_CONTINUE = 0
 FLEE_ACTION_ATTEMPT = 1
+REPLAY_ACTION_PASS = 0
+REPLAY_ACTION_DRAW = 1
 
 
 class GamePolicy:
@@ -40,6 +43,11 @@ class HeuristicPolicy(GamePolicy):
             return FLEE_ACTION_ATTEMPT if joueur._decision_fuite_ev(jeu) else FLEE_ACTION_CONTINUE
         return FLEE_ACTION_ATTEMPT if joueur._decision_fuite_seuils(jeu) else FLEE_ACTION_CONTINUE
 
+    def decide_replay(self, state, legal_actions):
+        joueur = state["player"]
+        jeu = state["game"]
+        return REPLAY_ACTION_DRAW if joueur._decision_replay_heuristic(jeu, state.get("log_details", [])) else REPLAY_ACTION_PASS
+
 
 class RandomPolicy(GamePolicy):
     def __init__(self, attempt_probability=0.5, rng=None):
@@ -54,6 +62,11 @@ class RandomPolicy(GamePolicy):
             if self.rng.random() < self.attempt_probability
             else FLEE_ACTION_CONTINUE
         )
+
+    def decide_replay(self, state, legal_actions):
+        if REPLAY_ACTION_DRAW not in legal_actions:
+            return REPLAY_ACTION_PASS
+        return REPLAY_ACTION_DRAW if self.rng.random() < 0.5 else REPLAY_ACTION_PASS
 
 
 class ScriptedPolicy(GamePolicy):
@@ -70,6 +83,9 @@ class ScriptedPolicy(GamePolicy):
                 return action
             return FLEE_ACTION_CONTINUE
         return self.fallback.decide_flee(state, legal_actions)
+
+    def decide_replay(self, state, legal_actions):
+        return self.fallback.decide_replay(state, legal_actions)
 
 
 class ModelPolicy(GamePolicy):
@@ -126,6 +142,40 @@ class NumpyPPOFleePolicy(GamePolicy):
         logits = self.action_weight @ x + self.action_bias
         action = int(np.argmax(logits))
         return action if action in legal_actions else FLEE_ACTION_CONTINUE
+
+
+class NumpyReplayPolicy(NumpyPPOFleePolicy):
+    def __init__(self, model_path, flee_policy=None):
+        with open(model_path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        self.layers = [
+            (
+                np.asarray(layer["weight"], dtype=np.float32),
+                np.asarray(layer["bias"], dtype=np.float32),
+            )
+            for layer in payload["policy_layers"]
+        ]
+        self.action_weight = np.asarray(payload["action_weight"], dtype=np.float32)
+        self.action_bias = np.asarray(payload["action_bias"], dtype=np.float32)
+        self.flee_policy = flee_policy or HeuristicPolicy("ev")
+        if self.layers[0][0].shape[1] != replay_observation_size():
+            raise ValueError(
+                f"model expects {self.layers[0][0].shape[1]} features, "
+                f"got {replay_observation_size()}"
+            )
+
+    def decide_flee(self, state, legal_actions):
+        return self.flee_policy.decide_flee(state, legal_actions)
+
+    def decide_replay(self, state, legal_actions):
+        if REPLAY_ACTION_DRAW not in legal_actions:
+            return REPLAY_ACTION_PASS
+        x = extract_replay_observation(state["player"], state["game"])
+        for weight, bias in self.layers:
+            x = np.tanh(weight @ x + bias)
+        logits = self.action_weight @ x + self.action_bias
+        action = int(np.argmax(logits))
+        return action if action in legal_actions else REPLAY_ACTION_PASS
 
 
 class StableBaselinesFleePolicy(GamePolicy):

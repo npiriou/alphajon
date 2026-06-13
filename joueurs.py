@@ -58,6 +58,8 @@ class Joueur:
         self.score_final = 0
         self.jet_fuite = 0
         self.rejoue = False # doit rejouer, reset en debut de tour
+        self.replay_decisions = 0
+        self.replay_draws = 0
         self.doit_passer = False # a trigger un effet qui le force a passer
         self.passe_son_tour = False # saute completement son tour sans piocher (Lapin Blanc)
         self.monstres_ajoutes_ce_tour = 0
@@ -252,7 +254,7 @@ class Joueur:
         types_couverts, puissances_couvertes = couverture if couverture is not None else self._couverture_objets()
         return carte.puissance in puissances_couvertes or any(t in types_couverts for t in types)
 
-    def deciderDeRejouer(self, Jeu, log_details):
+    def _decision_replay_heuristic(self, Jeu, log_details):
         """IA: decide de repiocher volontairement au lieu de passer son tour."""
         if not self.dans_le_dj or Jeu.donjon.vide or Jeu.traquenard_actif or self.doit_passer:
             return False
@@ -296,6 +298,22 @@ class Joueur:
         # 3) la pioche est quasi gratuite pour nous: continuer a poncer le Donjon
         log_details.append(f"{self.nom} ne risque plus rien et continue de poncer le Donjon.")
         return True
+
+    def deciderDeRejouer(self, Jeu, log_details):
+        self.replay_decisions += 1
+        policy = getattr(self, 'policy', None)
+        if policy is not None:
+            action = policy.decide_replay({
+                'player': self,
+                'game': Jeu,
+                'log_details': log_details,
+            }, (0, 1))
+            draw = int(action) == 1
+        else:
+            draw = self._decision_replay_heuristic(Jeu, log_details)
+        if draw:
+            self.replay_draws += 1
+        return draw
 
     def _nb_options_combat(self):
         # Objets actifs intacts qui peuvent reellement proteger: hook de combat ou

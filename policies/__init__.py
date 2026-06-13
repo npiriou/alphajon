@@ -1,23 +1,29 @@
 from .flee import (
     FLEE_ACTION_CONTINUE,
     FLEE_ACTION_ATTEMPT,
+    REPLAY_ACTION_PASS,
+    REPLAY_ACTION_DRAW,
     GamePolicy,
     HeuristicPolicy,
     RandomPolicy,
     ScriptedPolicy,
     ModelPolicy,
     NumpyPPOFleePolicy,
+    NumpyReplayPolicy,
     StableBaselinesFleePolicy,
 )
 
 __all__ = [
     "FLEE_ACTION_CONTINUE",
     "FLEE_ACTION_ATTEMPT",
+    "REPLAY_ACTION_PASS",
+    "REPLAY_ACTION_DRAW",
     "GamePolicy",
     "HeuristicPolicy",
     "RandomPolicy",
     "ScriptedPolicy",
     "ModelPolicy",
     "NumpyPPOFleePolicy",
+    "NumpyReplayPolicy",
     "StableBaselinesFleePolicy",
 ]

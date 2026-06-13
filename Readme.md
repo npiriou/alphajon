@@ -81,8 +81,14 @@ python bench_flee_stage1.py --games 20000 --policies ev model:flee_bc_mlp_policy
 Benchmark the combined learned policy:
 
 ```bash
-python bench_flee_stage1.py --games 20000 --policies ev "combined:flee_bc_mlp_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json"
+python bench_flee_stage1.py --games 80000 --processes 0 --policies ev "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json"
 ```
+
+Latest promoted pairwise result against corrected SimuDonjon `ev`:
+
+- `ev`: 25.22% win, 49.39% death;
+- combined learned policy: 30.93% win, 30.99% death;
+- gain: +5.71 win-rate points.
 
 Train supervised baselines:
 

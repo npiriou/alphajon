@@ -26,9 +26,16 @@ class _ProbePolicy:
         self.actions = list(actions)
         self.index = 0
         self.flee_policy = HeuristicPolicy("ev")
+        self.fallback = HeuristicPolicy("ev")
 
     def decide_flee(self, state, legal_actions):
         return self.flee_policy.decide_flee(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        return self.fallback.choose_item_to_break(state, legal_actions)
+
+    def choose_item_activation(self, state, legal_actions):
+        return self.fallback.choose_item_activation(state, legal_actions)
 
     def decide_replay(self, state, legal_actions):
         if self.index < len(self.actions):

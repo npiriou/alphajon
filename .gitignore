@@ -10,3 +10,5 @@ priorites_objets_backup.json
 # Generated ML datasets and local experimental policy exports
 datasets/
 *_policy_*.json
+*_stage*.json
+*_stage*.zip

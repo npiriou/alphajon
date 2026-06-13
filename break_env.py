@@ -30,6 +30,9 @@ class _BreakControlledPolicy:
     def decide_replay(self, state, legal_actions):
         return self.fallback.decide_replay(state, legal_actions)
 
+    def choose_item_activation(self, state, legal_actions):
+        return self.fallback.choose_item_activation(state, legal_actions)
+
     def choose_item_to_break(self, state, legal_actions):
         if self.index < len(self.env._actions):
             action = int(self.env._actions[self.index])

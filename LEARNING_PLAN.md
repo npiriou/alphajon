@@ -139,6 +139,16 @@ Current Stage 4 item model:
   - combined learned policy: 29.56% win, 31.28% death;
   - combat item use is aligned: `ev` 56.7%, learned 56.3%.
 
+Current promoted full-stack benchmark:
+
+- Flee, replay, and break heads were retrained with larger CUDA-capable PPO/MLP
+  training paths after the item v2 promotion.
+- Latest pairwise corrected-SimuDonjon benchmark:
+  - command: `python bench_flee_stage1.py --games 80000 --processes 0 --policies ev "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json"`;
+  - corrected SimuDonjon `ev`: 25.22% win, 49.39% death, 42.11% flee;
+  - promoted combined policy: 30.93% win, 30.99% death, 63.42% flee;
+  - measured gain: +5.71 win-rate points over corrected `ev`.
+
 ### Rare-Item Curriculum
 
 Random games are not enough to learn all items. Rare objects and rare hooks may

@@ -11,6 +11,10 @@ from gym_replay_env import GymReplayEnv
 from train_replay_model import collect_examples
 
 
+def parse_net_arch(text):
+    return [int(part) for part in text.split(",") if part.strip()]
+
+
 def behavior_clone_actor(model, samples, seed, epochs, lr):
     if samples <= 0 or epochs <= 0:
         return
@@ -61,6 +65,10 @@ def main():
     parser.add_argument("--bc-samples", type=int, default=0)
     parser.add_argument("--bc-epochs", type=int, default=5)
     parser.add_argument("--bc-lr", type=float, default=0.001)
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
+    parser.add_argument("--net-arch", default="128,128")
+    parser.add_argument("--n-steps", type=int, default=512)
+    parser.add_argument("--batch-size", type=int, default=256)
     args = parser.parse_args()
 
     env = Monitor(GymReplayEnv(seed_start=args.seed))
@@ -72,11 +80,12 @@ def main():
         env,
         seed=args.seed,
         verbose=1,
-        n_steps=256,
-        batch_size=64,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
         gamma=0.99,
         learning_rate=3e-4,
-        device="cpu",
+        device=args.device,
+        policy_kwargs={"net_arch": {"pi": parse_net_arch(args.net_arch), "vf": parse_net_arch(args.net_arch)}},
     )
     behavior_clone_actor(model, args.bc_samples, args.seed + 100000, args.bc_epochs, args.bc_lr)
     if args.timesteps > 0:

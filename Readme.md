@@ -1,119 +1,161 @@
-# SimuDonjon 🐉
+# AlphaJon
 
-Simulation de donjons, combats et phases de draft pour l'analyse statistique et l'équilibrage. Ce projet permet de lancer des simulations de descentes de donjons avec des héros, des monstres et des objets, ainsi que des simulations incluant une phase de draft, afin d'analyser les résultats (notamment les taux de victoire) et potentiellement d'équilibrer le jeu.
+AlphaJon is a machine-learning fork of
+[SimuDonjon](https://github.com/todiogame/simudonjon).
 
-## ✨ Fonctionnalités
+The original SimuDonjon project is a fast simulator for dungeon runs, item
+drafts, and balance analysis. AlphaJon keeps that simulator as the rules engine
+and adds policy interfaces, training environments, learned models, and
+benchmarks so the game can be played by progressively learned AI agents.
 
-* Simulation de multiples explorations de donjons.
-* Simulation d'une phase de draft suivie d'explorations de donjons.
-* Gestion détaillée des Héros, Monstres, Objets et Joueurs.
-* Calcul et affichage des taux de victoire (Winrate) après un grand nombre de simulations.
-* Affichage optionnel des détails des parties simulées.
-* Système de priorités pour l'attribution ou l'utilisation des objets.
-* Données de jeu (objets, priorités) gérées via des fichiers JSON.
-* Utilisation de `colorama` pour un affichage en couleur dans le terminal.
-* Minijeu interactif de draft via `minijeu.py`.
+## Current Goal
 
-## 🔧 Installation
+Train an AI that can play the full game while keeping the simulator trustworthy:
 
-1.  **Clonez le dépôt :**
-    ```bash
-    git clone [https://github.com/todiogame/simudonjon.git](https://github.com/todiogame/simudonjon.git)
-    cd simudonjon
-    ```
-2.  **Créez un environnement virtuel (recommandé) :**
-    ```bash
-    python -m venv venv
-    ```
-3.  **Activez l'environnement virtuel :**
-    * Sous Windows :
-        ```bash
-        .\venv\Scripts\activate
-        ```
-    * Sous macOS/Linux :
-        ```bash
-        source venv/bin/activate
-        ```
-4.  **Installez les dépendances :**
-    ```bash
-    pip install -r requirements.txt
-    ```
+- decide when to flee or keep going;
+- decide whether to replay/draw again;
+- choose which item to break, discard, repair, or replace;
+- decide when optional items should be used;
+- eventually draft items and play full evenings with medals and hero levels.
 
-## 🚀 Utilisation Principale
+The AI learns from structured game state, not from terminal logs or screen
+pixels.
 
-Il existe trois modes principaux pour lancer les simulations : `donjon.py` pour une simulation standard, `draft.py` pour une simulation incluant une phase de draft, et `party.py` pour une simulation de soirées complètes (plusieurs manches, Médailles et niveaux de héros portés entre les manches — au plus près de la vraie façon de jouer).
+## Current Learning Stages
 
-* Pour une simulation de soirées (winrate de soirée par objet/héros) :
-    ```bash
-    python party.py      # simulation de masse
-    python party.py 2    # 2 soirées détaillées avec logs
-    ```
+Implemented so far:
 
-L'argument passé en ligne de commande détermine le mode d'exécution :
+- Stage 1: flee / continue policy;
+- Stage 2: replay / pass policy;
+- Stage 3: object break policy;
+- partial Stage 4: combat and survival item activation policy.
 
-1.  **Afficher les détails d'un nombre limité de parties :**
-    Passez un nombre entier comme argument. Cela lancera ce nombre exact de simulations et affichera les détails de chacune.
+Planned next:
 
-    * Pour une simulation de donjon standard :
-        ```bash
-        # Lance 5 simulations et affiche les détails
-        python donjon.py 5
-        ```
-    * Pour une simulation avec draft :
-        ```bash
-        # Lance 3 simulations avec draft et affiche les détails
-        python draft.py 3
-        ```
+- finish full item-use coverage across all item hooks;
+- draft picking;
+- full evening strategy;
+- self-play and checkpoint leagues.
 
-2.  **Calculer le Winrate sur un grand nombre de parties :**
-    N'ajoutez aucun argument après le nom du script. Cela lancera un très grand nombre de simulations (par exemple, 100 000) sans afficher les détails, puis calculera et affichera un résumé statistique incluant le taux de victoire.
+See [LEARNING_PLAN.md](LEARNING_PLAN.md) for the detailed roadmap and current
+coverage notes.
 
-    * Pour une simulation de donjon standard :
-        ```bash
-        # Lance de nombreuses simulations et affiche le résumé/winrate
-        python donjon.py
-        ```
-    * Pour une simulation avec draft :
-        ```bash
-        # Lance de nombreuses simulations avec draft et affiche le résumé/winrate
-        python draft.py
-        ```
+## Baseline Simulator Usage
 
-3.  **Lancer plusieurs simulations en parallèle :**
-    Pour accélérer la collecte de données, vous pouvez lancer plusieurs simulations simultanément dans différents terminaux, puis agréger les résultats :
+The inherited SimuDonjon scripts are still available.
 
-    * Dans plusieurs terminaux :
-        ```bash
-        python draft.py
-        ```
-    
-    * Utilisez `aggreg.py` pour combiner les résultats :
-    ```bash
-    python aggreg.py
-    ```
-    
-    Cela produira un rapport consolidé avec les statistiques agrégées de toutes les simulations.
+Run a normal dungeon simulation:
 
-## 📁 Structure du Projet
+```bash
+python donjon.py
+```
 
-* `donjon.py`: Point d'entrée pour les simulations de donjon standard. Gère les arguments `sys.argv` pour le nombre de parties ou le mode winrate.
-* `draft.py`: Point d'entrée pour les simulations incluant une phase de draft. Gère les arguments `sys.argv`.
-* `party.py`: Point d'entrée pour les simulations de soirées complètes (2 à 5 manches + départage, draft avant chaque manche, Médailles et niveaux de héros conservés entre les manches). Métrique principale : winrate de soirée.
-* `simu.py`: Point d'entrée alternatif offrant plus d'options via `argparse`. Peut-être utilisé pour des tests spécifiques ou par les autres scripts.
-* `aggreg.py`: Module d'agrégation des statistiques et résultats de simulation. Permet de consolider et analyser les données sur plusieurs parties.
-* `wr.py`: Contient la logique spécifique au calcul et à l'affichage formaté du winrate.
-* `heros.py`, `monstres.py`, `objets.py`, `joueurs.py`: Modules définissant les classes principales du jeu (Héros, Monstre, Objet, Joueur).
-* `prio.py`: Gère la logique de priorisation des objets.
-* `minijeu.py`: Semble contenir la logique pour des mini-jeux potentiels.
-* `*.json`: Fichiers contenant les données du jeu (statistiques des objets, priorités, visuels).
-    * `item_visuals.json`
-    * `priorites_objets.json`
+Run a draft simulation:
 
-## 📦 Dépendances
+```bash
+python draft.py
+```
 
-Les dépendances nécessaires sont listées dans `requirements.txt`:
+Run full evening simulations:
 
-* `numpy`: Utilisé pour des calculs numériques.
-* `pandas`: Utilisé pour l'analyse et la manipulation des données.
-* `tqdm`: Utilisé pour afficher des barres de progression.
+```bash
+python party.py
+```
 
+Pass a number to run detailed logged games:
+
+```bash
+python donjon.py 5
+python draft.py 3
+python party.py 2
+```
+
+## Learning And Benchmark Commands
+
+Benchmark the current policies:
+
+```bash
+python bench_flee_stage1.py --games 20000 --policies ev model:flee_bc_mlp_policy.json
+```
+
+Benchmark the combined learned policy:
+
+```bash
+python bench_flee_stage1.py --games 20000 --policies ev "combined:flee_bc_mlp_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json"
+```
+
+Train supervised baselines:
+
+```bash
+python train_flee_model.py --samples 20000 --epochs 12 --out flee_bc_mlp_policy.json
+python train_replay_model.py --samples 20000 --epochs 12 --out replay_bc_mlp_policy.json
+python train_break_model.py --samples 20000 --epochs 12 --out break_bc_mlp_policy.json
+python train_item_model.py --samples 20000 --epochs 12 --out item_bc_mlp_policy.json
+```
+
+Train PPO policies where available:
+
+```bash
+python train_flee_ppo.py --timesteps 50000 --out flee_ppo.zip
+python train_replay_ppo.py --timesteps 50000 --out replay_ppo.zip
+```
+
+Export PPO actors to the lightweight JSON runtime format:
+
+```bash
+python export_flee_ppo.py --model flee_ppo.zip --out flee_ppo_policy.json
+python export_flee_ppo.py --model replay_ppo.zip --out replay_ppo_policy.json
+```
+
+## Project Structure
+
+- `simu.py`: main dungeon turn loop and rules execution.
+- `donjon.py`, `draft.py`, `party.py`: inherited simulator entry points.
+- `joueurs.py`: player state and legacy heuristic decisions.
+- `objets.py`: item definitions and hook-based item effects.
+- `heros.py`, `monstres.py`: hero and dungeon card definitions.
+- `policies/`: policy interface, learned runtime policies, and feature extractors.
+- `*_env.py`, `gym_*_env.py`: replayable training environments.
+- `train_*_model.py`: supervised imitation trainers.
+- `train_*_ppo.py`: Stable-Baselines3 PPO trainers.
+- `bench_flee_stage1.py`: policy benchmark runner.
+- `LEARNING_PLAN.md`: roadmap and coverage plan.
+
+## Installation
+
+Use Python 3.10+.
+
+```bash
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+On macOS/Linux:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Dependencies
+
+Core dependencies are listed in `requirements.txt`.
+
+Current ML work uses:
+
+- `numpy`;
+- `torch`;
+- `gymnasium`;
+- `stable-baselines3`.
+
+## Upstream
+
+This repository is derived from SimuDonjon:
+
+- upstream project: <https://github.com/todiogame/simudonjon>
+- AlphaJon focus: learned decision policies and training infrastructure
+
+Rules-engine changes should stay compatible with SimuDonjon behavior unless a
+change is explicitly part of the learning roadmap.

@@ -93,6 +93,22 @@ python train_break_model.py --samples 20000 --epochs 12 --out break_bc_mlp_polic
 python train_item_model.py --samples 20000 --epochs 12 --out item_bc_mlp_policy.json
 ```
 
+Generate reusable corrected-baseline item data with forced rare-item coverage:
+
+```bash
+python generate_item_dataset.py --samples 1000000 --seed-start 2000000 --forced-item-rounds 4 --processes 0 --out datasets/item_activation_1m.npz
+```
+
+Train a larger item activation model on GPU:
+
+```bash
+python train_item_model.py --dataset datasets/item_activation_1m.npz --epochs 30 --batch-size 8192 --hidden-sizes 512,512,256 --device cuda --out item_bc_mlp_policy.json
+```
+
+The current `item_bc_mlp_policy.json` uses the v2 exact-item feature extractor.
+It replaces the original 64-bucket item hash, which was too small for the item
+catalog.
+
 Train PPO policies where available:
 
 ```bash

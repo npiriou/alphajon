@@ -48,10 +48,11 @@ class ItemActivationEnv:
     action_space_n = 2
     observation_shape = (observation_size(),)
 
-    def __init__(self, nb_joueurs=4, controlled_seat=0, pv_min_fuite=6):
+    def __init__(self, nb_joueurs=4, controlled_seat=0, pv_min_fuite=6, forced_item_class=None):
         self.nb_joueurs = nb_joueurs
         self.controlled_seat = controlled_seat
         self.pv_min_fuite = pv_min_fuite
+        self.forced_item_class = forced_item_class
         self.seed_value = None
         self._actions = []
         self.last_obs = np.zeros(self.observation_shape, dtype=np.float32)
@@ -83,8 +84,15 @@ class ItemActivationEnv:
         persos = random.sample(persos_disponibles, self.nb_joueurs)
         joueurs = []
         for i, nom in enumerate(noms):
-            objs = random.sample(objets_simu, 6)
-            for obj in objs:
+            objs = []
+            if i == self.controlled_seat and self.forced_item_class is not None:
+                forced = next((obj for obj in objets_simu if type(obj) is self.forced_item_class), None)
+                if forced is not None:
+                    objs.append(forced)
+                    objets_simu.remove(forced)
+            sampled_objs = random.sample(objets_simu, 6 - len(objs))
+            objs.extend(sampled_objs)
+            for obj in sampled_objs:
                 objets_simu.remove(obj)
             joueur = Joueur(nom, persos[i], objs)
             joueur.politique_fuite = "ev"

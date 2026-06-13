@@ -6,7 +6,12 @@ import numpy as np
 from .flee_features import extract_flee_observation, observation_size, sigmoid
 from .replay_features import extract_replay_observation, observation_size as replay_observation_size
 from .break_features import MAX_OBJECTS, extract_break_observation, observation_size as break_observation_size
-from .item_features import extract_item_activation_observation, observation_size as item_observation_size
+from .item_features import (
+    extract_item_activation_observation,
+    extract_item_activation_observation_legacy,
+    legacy_observation_size as legacy_item_observation_size,
+    observation_size as item_observation_size,
+)
 
 FLEE_ACTION_CONTINUE = 0
 FLEE_ACTION_ATTEMPT = 1
@@ -318,10 +323,15 @@ class NumpyItemActivationPolicy(GamePolicy):
         self.flee_policy = flee_policy or HeuristicPolicy("ev")
         self.replay_policy = replay_policy or HeuristicPolicy("ev")
         self.break_policy = break_policy or HeuristicPolicy("ev")
-        if self.layers[0][0].shape[1] != item_observation_size():
+        self.input_size = self.layers[0][0].shape[1]
+        if self.input_size == item_observation_size():
+            self.extract_observation = extract_item_activation_observation
+        elif self.input_size == legacy_item_observation_size():
+            self.extract_observation = extract_item_activation_observation_legacy
+        else:
             raise ValueError(
-                f"model expects {self.layers[0][0].shape[1]} features, "
-                f"got {item_observation_size()}"
+                f"model expects {self.input_size} features, "
+                f"got supported sizes {legacy_item_observation_size()} or {item_observation_size()}"
             )
 
     def decide_flee(self, state, legal_actions):
@@ -336,7 +346,7 @@ class NumpyItemActivationPolicy(GamePolicy):
     def choose_item_activation(self, state, legal_actions):
         if 1 not in legal_actions:
             return legal_actions[0] if legal_actions else 0
-        x = extract_item_activation_observation(
+        x = self.extract_observation(
             state["player"], state["game"], state["item"], state["card"], state.get("hook", "")
         )
         for weight, bias in self.layers:

@@ -121,6 +121,24 @@ Use substantially larger datasets than the current smoke-test models:
 These are starting targets. Increase them when per-item or per-hook reports show
 rare decisions still have weak coverage.
 
+Current implementation commands:
+
+```bash
+python generate_item_dataset.py --samples 1000000 --seed-start 2000000 --forced-item-rounds 4 --processes 0 --out datasets/item_activation_1m.npz
+python train_item_model.py --dataset datasets/item_activation_1m.npz --epochs 30 --batch-size 8192 --hidden-sizes 512,512,256 --device cuda --out item_bc_mlp_policy.json
+```
+
+Current Stage 4 item model:
+
+- `item_bc_mlp_policy.json` uses exact item-class features (`item_activation_v2`)
+  instead of the original 64-bucket item hash.
+- Training source: 100k corrected-baseline item decisions with forced item
+  coverage.
+- Latest 20k-game mixed benchmark after promotion:
+  - corrected SimuDonjon `ev`: 26.74% win, 47.91% death;
+  - combined learned policy: 29.56% win, 31.28% death;
+  - combat item use is aligned: `ev` 56.7%, learned 56.3%.
+
 ### Rare-Item Curriculum
 
 Random games are not enough to learn all items. Rare objects and rare hooks may

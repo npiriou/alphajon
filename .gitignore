@@ -6,3 +6,7 @@ __pycache__/
 *.avant-synchro-juin2026.json
 backupfile_*.json
 priorites_objets_backup.json
+
+# Generated ML datasets and local experimental policy exports
+datasets/
+*_policy_*.json

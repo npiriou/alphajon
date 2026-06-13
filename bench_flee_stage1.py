@@ -12,6 +12,7 @@ from monstres import DonjonDeck
 from objets import objets_disponibles
 from policies import (
     HeuristicPolicy,
+    CombinedPolicy,
     NumpyBreakPolicy,
     ModelPolicy,
     NumpyPPOFleePolicy,
@@ -40,6 +41,16 @@ def make_policy(name):
         return NumpyReplayPolicy(name.split(":", 1)[1])
     if name.startswith("breakmodel:"):
         return NumpyBreakPolicy(name.split(":", 1)[1])
+    if name.startswith("combined:"):
+        parts = name.split(":", 1)[1].split(",")
+        if len(parts) != 3:
+            raise ValueError("combined policy must be combined:flee_path,replay_path,break_path")
+        flee_path, replay_path, break_path = parts
+        return CombinedPolicy(
+            flee_policy=NumpyPPOFleePolicy(flee_path),
+            replay_policy=NumpyReplayPolicy(replay_path),
+            break_policy=NumpyBreakPolicy(break_path),
+        )
     if name.startswith("ppo:"):
         return StableBaselinesFleePolicy(name.split(":", 1)[1])
     raise ValueError(f"unknown policy {name}")
@@ -194,7 +205,7 @@ def main():
         "--policies",
         nargs="+",
         default=["ev", "random"],
-        help="ev, seuils, random, model:path.json, fastppo:path.json, replaymodel:path.json, breakmodel:path.json, or ppo:path.zip",
+        help="ev, seuils, random, model:path.json, fastppo:path.json, replaymodel:path.json, breakmodel:path.json, combined:flee,replay,break, or ppo:path.zip",
     )
     args = parser.parse_args()
     processes = args.processes

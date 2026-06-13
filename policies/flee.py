@@ -56,6 +56,22 @@ class HeuristicPolicy(GamePolicy):
         return state["player"].objets.index(objet)
 
 
+class CombinedPolicy(GamePolicy):
+    def __init__(self, flee_policy=None, replay_policy=None, break_policy=None):
+        self.flee_policy = flee_policy or HeuristicPolicy("ev")
+        self.replay_policy = replay_policy or HeuristicPolicy("ev")
+        self.break_policy = break_policy or HeuristicPolicy("ev")
+
+    def decide_flee(self, state, legal_actions):
+        return self.flee_policy.decide_flee(state, legal_actions)
+
+    def decide_replay(self, state, legal_actions):
+        return self.replay_policy.decide_replay(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        return self.break_policy.choose_item_to_break(state, legal_actions)
+
+
 class RandomPolicy(GamePolicy):
     def __init__(self, attempt_probability=0.5, rng=None):
         self.attempt_probability = attempt_probability

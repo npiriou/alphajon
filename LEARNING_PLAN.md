@@ -13,10 +13,20 @@ Train an AI that can play the full game:
 - decide when to flee, pass, or keep drawing;
 - choose which object to break, discard, repair, or replace;
 - adapt risk to medals, hero level, standings, and remaining rounds;
-- beat the current heuristic AI with statistically significant results.
+- beat the current heuristic AI with statistically significant results;
+- ultimately beat the corrected SimuDonjon bots at least 80% of the time in
+  held-out pairwise benchmarks.
 
 The AI should not learn the rules from pixels or logs. It should learn decisions
 from structured game states produced by the simulator.
+
+The corrected SimuDonjon bots are weak sparring partners, not teachers to copy
+forever. Imitation learning is allowed only as a bootstrap to avoid random
+behavior and to verify the policy wiring. Once a decision surface is wired, the
+training target must move toward real value: winrate, survival when it matters,
+score when it affects rank, and evening victory. A model that merely reproduces
+`worthit(...)`, `deciderDeRejouer`, `decideBriseObjet`, or draft priors is not a
+finished AlphaJon model.
 
 ## Current Codebase Shape
 
@@ -204,22 +214,95 @@ Later model target:
 
 ### Training Sequence
 
-Use a staged sequence instead of immediately training one giant RL policy:
+Use a staged sequence instead of immediately training one giant RL policy, but
+do not stay in imitation mode longer than necessary:
 
 1. Correct the policy wrapper until it reproduces native SimuDonjon decisions.
-2. Generate large corrected-baseline imitation datasets.
-3. Train bigger supervised models until held-out baseline agreement is strong.
+   This protects the benchmark baseline; it is not the final training target.
+2. Use imitation only as bootstrap:
+   - enough to prevent random illegal-looking behavior;
+   - enough to verify that the model can express the baseline;
+   - never as proof that the model is good.
+3. For each decision surface, replace bot imitation with value training:
+   - enumerate legal actions at the decision point;
+   - replay from the same seed/prefix under each candidate action;
+   - compare downstream winrate, death, score, and rank;
+   - train the model toward the action with the best actual value.
 4. Run ablations against corrected SimuDonjon:
    - learned flee only;
-   - learned flee plus replay;
-   - plus break/discard;
-   - plus item activation;
-   - plus full item-use hooks.
+   - learned replay only;
+   - learned break/discard only;
+   - learned item activation only;
+   - combined policies.
 5. Identify which head improves winrate and which head hurts.
-6. Fine-tune with RL only after imitation is stable.
+6. Fine-tune with RL/self-play after value labels prove stronger than the bot.
 7. Train against a league: corrected SimuDonjon, random, previous checkpoints,
-   and latest checkpoint.
+   latest checkpoint, and deliberately aggressive/conservative variants.
 8. Evaluate only on held-out seeds with randomized seats.
+9. Promote a model only when it improves held-out winrate, not when it improves
+   imitation accuracy.
+
+The medium-term target is not "+5 points over SimuDonjon". That is only proof
+that the pipeline works. The target is to win at least 80% of pairwise benchmark
+seats against corrected SimuDonjon bots. Any decision head that cannot exceed
+the bot after imitation must switch to counterfactual value labels or RL.
+
+### Counterfactual Value Training
+
+This is the next training regime for item use, object break/discard, replay,
+flee, and eventually draft.
+
+At a decision point:
+
+- capture the full replay prefix that reaches the decision;
+- enumerate legal actions;
+- for each action, replay the rest of the game several times with controlled
+  downstream policies;
+- compute action value from actual outcomes:
+  - primary: win/loss;
+  - secondary: death only when it reduces win/evening odds;
+  - tertiary: score, rank, clear, medals, and future item value;
+- train either:
+  - a classifier choosing the best action; or
+  - a value model `Q(state, action)` and select the legal action with max value.
+
+For item use, `worthit(...)` must only be used by the corrected SimuDonjon
+baseline. It must not be the final label source. The current item model is still
+too close to `worthit`; it should be replaced by counterfactual action-value
+training.
+
+For object break/discard, `decideBriseObjet` is also only a bootstrap baseline.
+The real target is: which object sacrifice maximizes future winrate from this
+state?
+
+For replay/flee, PPO already moves beyond pure imitation, but the reward still
+needs to be sharpened toward rank/winrate. The model should learn when to push
+for points because it is behind, and when to stop because it is already winning.
+
+### 80% Winrate Roadmap
+
+The route to 80% against corrected SimuDonjon is:
+
+- Stage A: beat corrected `ev` consistently by any margin.
+  - current status: achieved in pairwise single-game benchmark;
+  - promoted combined policy: 30.93% vs 25.22% in the latest pairwise table.
+- Stage B: reach 40-50% individual seat winrate in mixed 3-4 player games.
+  This likely requires counterfactual item/break training and better joint
+  flee/replay rewards.
+- Stage C: dominate corrected bots in policy league play.
+  The model should beat `ev`, random, and older checkpoints without relying on
+  a single exploitable style.
+- Stage D: reach 80% pairwise winrate against corrected SimuDonjon bots on large
+  held-out seed ranges.
+- Stage E: transfer that dominance to draft and evening mode.
+
+Promotion gates for the 80% roadmap:
+
+- every promoted model must report pairwise winrate vs corrected `ev`;
+- every promoted model must report league winrate vs mixed opponents;
+- item and break models must report per-item/per-hook value coverage;
+- no model can be promoted just because it matches the baseline better;
+- the final acceptance benchmark must be held out from all training seeds.
 
 ### Reward Direction
 
@@ -324,6 +407,8 @@ Success criteria:
 
 - Beat or match current `politique_fuite = "ev"` in mixed-seat benchmarks.
 - Report win%, death%, flee%, clear%, average score, and confidence intervals.
+- Later Stage 1+2 target: replay/flee jointly trained should materially exceed
+  corrected `ev`, not merely reproduce its risk thresholds.
 
 ### Stage 2: Learn Replay / Pass
 
@@ -344,7 +429,9 @@ Success criteria:
 
 - Better score/win tradeoff than the heuristic `deciderDeRejouer`.
 - No pathological behavior such as endless greedy drawing when death risk is
-obvious.
+  obvious.
+- Replay labels should move from heuristic imitation to counterfactual value
+  labels once the replay environment is stable.
 
 ### Stage 3: Learn Object Break / Discard Choices
 
@@ -370,6 +457,8 @@ Success criteria:
 
 - Equal or better winrate than current object-breaking heuristic.
 - Lower death rate in Limon and object-loss-heavy scenarios.
+- Final break/discard policy must be trained from action value, not just from
+  `decideBriseObjet` imitation.
 
 ### Stage 4: Learn Full Item Use
 
@@ -480,6 +569,8 @@ Success criteria:
   held-out benchmarks.
 - Benchmark reports per-hook decision counts and use rates.
 - Draft training is not started until this stage has a coverage report.
+- Final item-use model must beat `worthit(...)` by counterfactual value, not
+  merely imitate it.
 
 ### Stage 5: Learn Draft Picking
 
@@ -515,6 +606,8 @@ Success criteria:
 
 - Better item pick winrate than current `draft.py` priors in held-out seeds.
 - Better evening winrate than `party.py` draft heuristic after Stage 6.
+- Draft imitation from priors is only a bootstrap; final draft policy must be
+  trained against game/evening outcomes.
 
 ### Stage 6: Full Evening Strategy
 
@@ -568,6 +661,8 @@ Success criteria:
 - New models beat old checkpoints.
 - The model remains strong against the original heuristic.
 - Performance is stable across 3-player and 4-player games.
+- Long-term target: at least 80% winrate against corrected SimuDonjon bots in
+  held-out pairwise benchmarks.
 
 ## Environment Design
 
@@ -670,6 +765,10 @@ Do not add these until the first environment wrapper is ready.
 - Do not start with all 265 object hooks as learned actions.
 - Do not optimize only final score while ignoring winrate.
 - Do not trust training reward without held-out policy benchmarks.
+- Do not treat bot imitation as success. Copying `worthit(...)`,
+  `deciderDeRejouer`, `decideBriseObjet`, or draft priors is only bootstrap.
+- Do not promote a model because it has high imitation accuracy if it does not
+  improve held-out winrate.
 
 ## Definition of Done for AlphaJon
 
@@ -678,5 +777,7 @@ AlphaJon is successful when a trained policy:
 - plays full evenings end to end;
 - makes draft and in-game decisions through model-backed policies;
 - beats the current heuristic AI over a large held-out benchmark;
+- reaches at least 80% winrate against corrected SimuDonjon bots in the final
+  target benchmark;
 - provides reproducible training and evaluation scripts;
 - leaves the simulator usable for ordinary balance testing.

@@ -22,22 +22,23 @@ class _ItemControlledPolicy:
     def __init__(self, env):
         self.env = env
         self.index = 0
-        self.fallback = HeuristicPolicy("ev")
 
     def decide_flee(self, state, legal_actions):
-        return self.fallback.decide_flee(state, legal_actions)
+        return self.env.rollout_policy.decide_flee(state, legal_actions)
 
     def decide_replay(self, state, legal_actions):
-        return self.fallback.decide_replay(state, legal_actions)
+        return self.env.rollout_policy.decide_replay(state, legal_actions)
 
     def choose_item_to_break(self, state, legal_actions):
-        return self.fallback.choose_item_to_break(state, legal_actions)
+        return self.env.rollout_policy.choose_item_to_break(state, legal_actions)
 
     def choose_item_activation(self, state, legal_actions):
         if self.index < len(self.env._actions):
             action = int(self.env._actions[self.index])
             self.index += 1
             return action if action in legal_actions else 0
+        if self.env.continue_with_rollout_policy:
+            return self.env.rollout_policy.choose_item_activation(state, legal_actions)
         obs = extract_item_activation_observation(
             state["player"], state["game"], state["item"], state["card"], state.get("hook", "")
         )
@@ -55,6 +56,8 @@ class ItemActivationEnv:
         self.forced_item_class = forced_item_class
         self.seed_value = None
         self._actions = []
+        self.rollout_policy = HeuristicPolicy("ev")
+        self.continue_with_rollout_policy = False
         self.last_obs = np.zeros(self.observation_shape, dtype=np.float32)
         self.last_info = {}
         self.terminal_players = None
@@ -73,6 +76,25 @@ class ItemActivationEnv:
         if self.terminal_players is None:
             return obs, 0.0, False, False, info
         return obs, self._reward(), True, False, info
+
+    def run_to_terminal(self, seed, actions, rollout_policy=None):
+        previous_policy = self.rollout_policy
+        previous_continue = self.continue_with_rollout_policy
+        try:
+            self.seed_value = int(seed)
+            self._actions = list(actions)
+            self.terminal_players = None
+            self.vainqueur = None
+            if rollout_policy is not None:
+                self.rollout_policy = rollout_policy
+            self.continue_with_rollout_policy = True
+            obs, info = self._replay()
+            if self.terminal_players is None:
+                raise RuntimeError("rollout policy did not resolve all item activation decisions")
+            return obs, self._reward(), info
+        finally:
+            self.rollout_policy = previous_policy
+            self.continue_with_rollout_policy = previous_continue
 
     def _build_game(self):
         random.seed(self.seed_value)

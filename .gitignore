@@ -12,3 +12,7 @@ datasets/
 *_policy_*.json
 *_stage*.json
 *_stage*.zip
+item_value*_policy.json
+item_value*_policy.zip
+item_ppo*.json
+item_ppo*.zip

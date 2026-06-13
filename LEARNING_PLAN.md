@@ -159,6 +159,52 @@ Current promoted full-stack benchmark:
   - promoted combined policy: 30.93% win, 30.99% death, 63.42% flee;
   - measured gain: +5.71 win-rate points over corrected `ev`.
 
+Current stage status:
+
+- Stage 0 policy boundary: usable for current benchmarks.
+- Stage 1 flee: promoted PPO head improves survival but still over-flees.
+- Stage 2 replay: promoted PPO head is the strongest current winrate gain.
+- Stage 3 break/discard: promoted MLP is near-neutral and still mostly a
+  bootstrap head.
+- Stage 4 item activation: not solved. The promoted item model remains the
+  best benchmarked option, but it is still an imitation/bootstrap model close
+  to `worthit(...)`. Counterfactual value labels and PPO tooling now exist, but
+  the first trained candidates did not beat the promoted item model.
+- Stage 5 draft: not started; blocked on stronger item play.
+- Stage 6 evening strategy: not started.
+- Stage 7 policy league/self-play: planned after decision heads can beat their
+  bootstrap baselines.
+
+Latest Stage 4 experimental results:
+
+- Counterfactual value dataset:
+  - command: `python generate_item_value_dataset.py --samples 100000 --seed-start 8400000 --out datasets/item_value_100k_current_policy.npz --processes 0 --rollout-policy current`;
+  - labels are terminal-value labels, not `worthit(...)` labels;
+  - survival activations are forced to "use" when legal because this is a game
+    safety constraint, not a weak heuristic preference;
+  - trained model: `item_value_current_100k_policy.json`;
+  - benchmark result: worse than the promoted item model, mainly because combat
+    item use dropped too far.
+- PPO item experiment:
+  - bootstrap: 1M corrected-baseline item decisions;
+  - fine-tune: 100k PPO item-activation timesteps with current flee/replay/break
+    heads delegated;
+  - trained model: `item_ppo_bc1m_100k_policy.json`;
+  - benchmark result: worse than the promoted item model, mainly because combat
+    item use became too high.
+
+Stage 4 next direction:
+
+- Do not promote either experimental item candidate.
+- Replace single-rollout action labels with multi-rollout action values per
+  decision and per downstream policy.
+- Train a `Q(state, action)` value model rather than only a binary classifier,
+  so the policy can express uncertainty and legal-action margins.
+- Add per-item reports that show which objects are helped or harmed by the new
+  policy before running broad promotion benchmarks.
+- Continue using the promoted imitation item model as the runtime fallback until
+  a value/RL candidate wins held-out benchmarks.
+
 ### Rare-Item Curriculum
 
 Random games are not enough to learn all items. Rare objects and rare hooks may

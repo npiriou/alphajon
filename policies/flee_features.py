@@ -19,7 +19,7 @@ POWER_BINS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 
 def _stable_bucket(text, size):
-    raw = hashlib.sha1(text.encode("utf-8", errors="ignore")).digest()
+    raw = hashlib.sha1(str(text).encode("utf-8", errors="ignore")).digest()
     return int.from_bytes(raw[:4], "little") % size
 
 

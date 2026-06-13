@@ -51,7 +51,8 @@ def run_benchmark(policy_names, games, seed_start):
         nb_joueurs = random.choice([3, 4])
         noms = ["Sagarex", "Francis", "Mastho", "Mr.Adam"][:nb_joueurs]
         persos = random.sample(persos_disponibles, nb_joueurs)
-        assigned = [policy_names[i % len(policy_names)] for i in range(nb_joueurs)]
+        offset = game_idx % len(policy_names)
+        assigned = [policy_names[(offset + i) % len(policy_names)] for i in range(nb_joueurs)]
         random.shuffle(assigned)
         joueurs = []
         for i, nom in enumerate(noms):

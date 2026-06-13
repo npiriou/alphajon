@@ -1,5 +1,7 @@
 import argparse
 import math
+import multiprocessing
+import os
 import random
 
 import numpy as np
@@ -8,8 +10,17 @@ from heros import persos_disponibles
 from joueurs import Joueur
 from monstres import DonjonDeck
 from objets import objets_disponibles
-from policies import HeuristicPolicy, ModelPolicy, RandomPolicy, StableBaselinesFleePolicy
+from policies import (
+    HeuristicPolicy,
+    ModelPolicy,
+    NumpyPPOFleePolicy,
+    RandomPolicy,
+    StableBaselinesFleePolicy,
+)
 from simu import ordonnanceur
+
+_WORKER_POLICY_NAMES = None
+_WORKER_POLICY_CACHE = None
 
 
 def make_policy(name):
@@ -21,9 +32,15 @@ def make_policy(name):
         return RandomPolicy(0.5)
     if name.startswith("model:"):
         return ModelPolicy(name.split(":", 1)[1])
+    if name.startswith("fastppo:"):
+        return NumpyPPOFleePolicy(name.split(":", 1)[1])
     if name.startswith("ppo:"):
         return StableBaselinesFleePolicy(name.split(":", 1)[1])
     raise ValueError(f"unknown policy {name}")
+
+
+def make_policy_cache(policy_names):
+    return {name: make_policy(name) for name in policy_names}
 
 
 def empty_stats(policy_names):
@@ -41,7 +58,7 @@ def empty_stats(policy_names):
     }
 
 
-def run_benchmark(policy_names, games, seed_start):
+def _run_benchmark_with_cache(policy_names, games, seed_start, policy_cache, game_offset=0):
     stats = empty_stats(policy_names)
     for game_idx in range(games):
         seed = seed_start + game_idx
@@ -53,7 +70,7 @@ def run_benchmark(policy_names, games, seed_start):
         nb_joueurs = random.choice([3, 4])
         noms = ["Sagarex", "Francis", "Mastho", "Mr.Adam"][:nb_joueurs]
         persos = random.sample(persos_disponibles, nb_joueurs)
-        offset = game_idx % len(policy_names)
+        offset = (game_offset + game_idx) % len(policy_names)
         assigned = [policy_names[(offset + i) % len(policy_names)] for i in range(nb_joueurs)]
         random.shuffle(assigned)
         joueurs = []
@@ -63,7 +80,7 @@ def run_benchmark(policy_names, games, seed_start):
                 objets_simu.remove(obj)
             j = Joueur(nom, persos[i], objs)
             j.policy_name = assigned[i]
-            j.policy = make_policy(assigned[i])
+            j.policy = policy_cache[assigned[i]]
             joueurs.append(j)
         vainqueur, _ = ordonnanceur(joueurs, DonjonDeck(), 6, objets_simu, False)
         for j in joueurs:
@@ -76,6 +93,57 @@ def run_benchmark(policy_names, games, seed_start):
             score = float(j.score_final if getattr(j, "compte_au_score", False) else 0.0)
             s["score"] += score
             s["score_values"].append(score)
+    return stats
+
+
+def run_benchmark(policy_names, games, seed_start):
+    return _run_benchmark_with_cache(
+        policy_names, games, seed_start, make_policy_cache(policy_names)
+    )
+
+
+def merge_stats(dest, src):
+    for policy, values in src.items():
+        d = dest[policy]
+        for key, value in values.items():
+            if key == "score_values":
+                d[key].extend(value)
+            else:
+                d[key] += value
+
+
+def _init_worker(policy_names):
+    global _WORKER_POLICY_NAMES, _WORKER_POLICY_CACHE
+    _WORKER_POLICY_NAMES = policy_names
+    _WORKER_POLICY_CACHE = make_policy_cache(policy_names)
+
+
+def _batch(args):
+    games, seed_start, game_offset = args
+    return _run_benchmark_with_cache(
+        _WORKER_POLICY_NAMES, games, seed_start, _WORKER_POLICY_CACHE, game_offset
+    )
+
+
+def run_benchmark_parallel(policy_names, games, seed_start, processes):
+    if processes <= 1 or games <= 1:
+        return run_benchmark(policy_names, games, seed_start)
+
+    batches = min(processes * 4, games)
+    base, rest = divmod(games, batches)
+    jobs = []
+    offset = 0
+    for i in range(batches):
+        count = base + (1 if i < rest else 0)
+        if count <= 0:
+            continue
+        jobs.append((count, seed_start + offset, offset))
+        offset += count
+
+    stats = empty_stats(policy_names)
+    with multiprocessing.Pool(processes, initializer=_init_worker, initargs=(policy_names,)) as pool:
+        for partial in pool.imap_unordered(_batch, jobs):
+            merge_stats(stats, partial)
     return stats
 
 
@@ -107,14 +175,18 @@ def main():
     parser = argparse.ArgumentParser(description="Stage 1 flee policy benchmark.")
     parser.add_argument("--games", type=int, default=500)
     parser.add_argument("--seed-start", type=int, default=200000)
+    parser.add_argument("--processes", type=int, default=1)
     parser.add_argument(
         "--policies",
         nargs="+",
         default=["ev", "random"],
-        help="ev, seuils, random, or model:path/to/flee_model.json",
+        help="ev, seuils, random, model:path.json, fastppo:path.json, or ppo:path.zip",
     )
     args = parser.parse_args()
-    stats = run_benchmark(args.policies, args.games, args.seed_start)
+    processes = args.processes
+    if processes == 0:
+        processes = max(1, (os.cpu_count() or 2) - 1)
+    stats = run_benchmark_parallel(args.policies, args.games, args.seed_start, processes)
     print_stats(stats)
 
 

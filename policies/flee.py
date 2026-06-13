@@ -98,6 +98,36 @@ class ModelPolicy(GamePolicy):
         return FLEE_ACTION_ATTEMPT if p >= self.threshold else FLEE_ACTION_CONTINUE
 
 
+class NumpyPPOFleePolicy(GamePolicy):
+    def __init__(self, model_path):
+        with open(model_path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        self.layers = [
+            (
+                np.asarray(layer["weight"], dtype=np.float32),
+                np.asarray(layer["bias"], dtype=np.float32),
+            )
+            for layer in payload["policy_layers"]
+        ]
+        self.action_weight = np.asarray(payload["action_weight"], dtype=np.float32)
+        self.action_bias = np.asarray(payload["action_bias"], dtype=np.float32)
+        if self.layers[0][0].shape[1] != observation_size():
+            raise ValueError(
+                f"model expects {self.layers[0][0].shape[1]} features, "
+                f"got {observation_size()}"
+            )
+
+    def decide_flee(self, state, legal_actions):
+        if FLEE_ACTION_ATTEMPT not in legal_actions:
+            return FLEE_ACTION_CONTINUE
+        x = extract_flee_observation(state["player"], state["game"])
+        for weight, bias in self.layers:
+            x = np.tanh(weight @ x + bias)
+        logits = self.action_weight @ x + self.action_bias
+        action = int(np.argmax(logits))
+        return action if action in legal_actions else FLEE_ACTION_CONTINUE
+
+
 class StableBaselinesFleePolicy(GamePolicy):
     def __init__(self, model_path, deterministic=True):
         from stable_baselines3 import PPO

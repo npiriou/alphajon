@@ -6,6 +6,7 @@ from .flee import (
     RandomPolicy,
     ScriptedPolicy,
     ModelPolicy,
+    NumpyPPOFleePolicy,
     StableBaselinesFleePolicy,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "RandomPolicy",
     "ScriptedPolicy",
     "ModelPolicy",
+    "NumpyPPOFleePolicy",
     "StableBaselinesFleePolicy",
 ]

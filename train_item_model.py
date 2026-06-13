@@ -69,7 +69,10 @@ def collect_examples(samples, seed_start):
             except RuntimeError:
                 break
             item = state["item"]
-            label = 1 if item.worthit(state["player"], state["card"], state["game"], []) else 0
+            if state.get("hook") == "en_survie":
+                label = 1
+            else:
+                label = 1 if item.worthit(state["player"], state["card"], state["game"], []) else 0
             xs.append(obs.copy())
             ys.append(label)
             obs, _, done, _, _ = env.step(label)

@@ -70,6 +70,165 @@ delegate to the heuristic policy.
 
 ## Training Stages
 
+## Serious Training Plan
+
+The current learned policies are proof-of-plumbing models, not final-strength
+models. A few tens of thousands of supervised samples is too small for a game
+with hundreds of items, rare hooks, delayed rewards, and opponent-dependent
+flee decisions. Future training should use the available RTX 3090 seriously,
+while remembering that rollout generation may be CPU-bound.
+
+### Compute Assumptions
+
+- Target hardware: one RTX 3090.
+- GPU should be used for batched model training, larger networks, and repeated
+  fine-tuning runs.
+- CPU workers should generate simulator rollouts in parallel and write reusable
+  datasets to disk.
+- Every major run must have a held-out seed range and a saved config file.
+- Do not treat a model as improved unless it beats the corrected SimuDonjon
+  heuristic baseline, not a weakened wrapper.
+
+### Correct Baseline Requirement
+
+Before any serious training run:
+
+- `HeuristicPolicy("ev")` must match native SimuDonjon behavior for every
+  delegated decision surface.
+- Item activation in the baseline must use native `worthit(...)` logic for
+  combat items, not "always use".
+- Benchmark labels must clearly distinguish:
+  - corrected SimuDonjon heuristic;
+  - random baseline;
+  - imitation model;
+  - RL/self-play model;
+  - combined policy.
+- The benchmark report must include per-hook item use rates so baseline
+  mismatches are visible immediately.
+
+### Data Scale Targets
+
+Use substantially larger datasets than the current smoke-test models:
+
+- flee/replay imitation: 500k to 2M decision points;
+- object break/discard imitation: 500k to 2M decision points;
+- combat item activation: 1M to 5M decision points;
+- full item-use decisions after hook routing: 2M to 10M decision points;
+- draft imitation: at least 1M picks before RL fine-tuning;
+- final RL/self-play: millions of simulated games or evenings, evaluated on
+  completely separate seeds.
+
+These are starting targets. Increase them when per-item or per-hook reports show
+rare decisions still have weak coverage.
+
+### Rare-Item Curriculum
+
+Random games are not enough to learn all items. Rare objects and rare hooks may
+appear too infrequently even in large rollouts. Stage 4 needs targeted data
+generation:
+
+- force each item into a player's inventory across many seeds;
+- generate legal states for each implemented hook;
+- oversample dangerous, close-score, and low-HP states;
+- oversample states where using the item now competes with saving it for later;
+- record baseline action, model action, legal actions, hook, item id, hero id,
+  card features, opponent scores, and final outcome;
+- keep a minimum decision-count target per item and per hook before training is
+  considered valid.
+
+Minimum coverage targets before trusting an item model:
+
+- 1,000+ supervised examples per common item hook;
+- 250+ examples for each rare implemented hook;
+- explicit forced-scenario tests for every item with unique behavior;
+- no item silently absent from the training report.
+
+### Model Capacity Targets
+
+The current small MLP is acceptable for plumbing, but not for final item play.
+The next serious models should include:
+
+- item id embeddings;
+- hero id and level embeddings;
+- hook embeddings;
+- card type/power/effect features;
+- inventory set features for intact and broken items;
+- opponent score and dungeon-status features;
+- action masking for legal target choices;
+- separate heads for binary activation, target selection, repair/discard/replace
+  choices, roll choices, flee, replay, and draft.
+
+Initial larger model target:
+
+- 2 to 4 hidden layers;
+- 256 to 512 hidden units;
+- embeddings for item, hero, hook, and card/effect ids;
+- dropout or weight decay only if held-out imitation accuracy overfits;
+- checkpoint every run with config, seed range, and metrics.
+
+Later model target:
+
+- shared trunk for dungeon state;
+- decision-specific heads;
+- item/card embeddings reused by item-use and draft policies;
+- optional attention over inventory, legal actions, and visible card/deck
+  summaries if fixed vectors become limiting.
+
+### Training Sequence
+
+Use a staged sequence instead of immediately training one giant RL policy:
+
+1. Correct the policy wrapper until it reproduces native SimuDonjon decisions.
+2. Generate large corrected-baseline imitation datasets.
+3. Train bigger supervised models until held-out baseline agreement is strong.
+4. Run ablations against corrected SimuDonjon:
+   - learned flee only;
+   - learned flee plus replay;
+   - plus break/discard;
+   - plus item activation;
+   - plus full item-use hooks.
+5. Identify which head improves winrate and which head hurts.
+6. Fine-tune with RL only after imitation is stable.
+7. Train against a league: corrected SimuDonjon, random, previous checkpoints,
+   and latest checkpoint.
+8. Evaluate only on held-out seeds with randomized seats.
+
+### Reward Direction
+
+The current learned combined policy wins slightly more than corrected SimuDonjon
+but flees much more and clears less. That means the reward currently encourages
+survival strongly. Future RL reward should be sharper:
+
+- primary reward: game win or evening win;
+- strong negative: death only when it harms win/evening outcome;
+- small shaping: score, survival, and clear bonus;
+- explicit pressure to keep playing when behind and flee when already winning;
+- no large reward for survival alone if it produces low winning chances.
+
+Track these diagnostics:
+
+- winrate by seat count;
+- death rate;
+- flee rate;
+- clear rate;
+- score when fleeing;
+- lost-by-1 or lost-by-2 after fleeing;
+- item use rate by hook and item;
+- baseline agreement by decision type;
+- win delta by policy head.
+
+### Acceptance Gates
+
+Do not move from one training phase to the next unless:
+
+- generated datasets meet per-item and per-hook coverage targets;
+- corrected SimuDonjon wrapper parity has been checked;
+- imitation model beats random and closely matches baseline on held-out
+  decisions;
+- RL fine-tuning improves held-out winrate, not only average score;
+- ablations show the new head is not hiding behind another stronger head;
+- benchmark confidence intervals support the claimed gain.
+
 ### Stage 0: Stabilize the Simulator Boundary
 
 Purpose: make the current game runnable through policy objects without changing

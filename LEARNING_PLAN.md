@@ -220,6 +220,34 @@ Important distinction:
   through the rules engine and counted as implemented, but not exposed as model
   actions unless there is a legal "use / skip" choice.
 
+Passive and mandatory item handling:
+
+- A passive item is always applied when its rule condition is true and has no
+  player choice. Examples include score modifiers, automatic repairs after a
+  matching trigger, medal protection, stat bonuses, and bookkeeping counters.
+  These should remain deterministic rule code.
+- A mandatory item is an effect that the real player cannot decline once the
+  trigger happens. These should also remain deterministic rule code, even if the
+  effect can be good or bad.
+- A forced trigger with an internal target choice should not be modeled as
+  "use / skip". Only the target should be exposed to the policy. For example,
+  if an item must repair or discard something, the policy can choose which legal
+  object/card is affected, but not whether the trigger exists.
+- A random effect is not a model decision unless the player chooses whether to
+  activate it before the roll. Once activated, the roll and consequences stay in
+  the rules engine.
+- A hook is optional only when the player can legally decline the activation and
+  preserve the item/state for later. Those hooks should use
+  `choose_item_activation`.
+- A hook is a target-choice decision when activation is already determined but
+  the player can choose a legal object, card, player, discard, repair, replace,
+  or copied item. Those hooks need a specific policy method instead of a binary
+  activation action.
+- The coverage report for this stage must list every item hook as one of:
+  `optional_activation`, `passive`, `mandatory`, `target_choice`,
+  `discard_choice`, `repair_choice`, `replace_choice`, `roll_choice`, or
+  `random_no_decision`.
+
 Tasks:
 
 - Audit every non-combat item hook and classify it as one of:

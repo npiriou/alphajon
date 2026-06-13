@@ -9,6 +9,7 @@ from .flee import (
     ScriptedPolicy,
     ModelPolicy,
     NumpyPPOFleePolicy,
+    NumpyBreakPolicy,
     NumpyReplayPolicy,
     StableBaselinesFleePolicy,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "ScriptedPolicy",
     "ModelPolicy",
     "NumpyPPOFleePolicy",
+    "NumpyBreakPolicy",
     "NumpyReplayPolicy",
     "StableBaselinesFleePolicy",
 ]

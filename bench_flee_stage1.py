@@ -12,6 +12,7 @@ from monstres import DonjonDeck
 from objets import objets_disponibles
 from policies import (
     HeuristicPolicy,
+    NumpyBreakPolicy,
     ModelPolicy,
     NumpyPPOFleePolicy,
     NumpyReplayPolicy,
@@ -37,6 +38,8 @@ def make_policy(name):
         return NumpyPPOFleePolicy(name.split(":", 1)[1])
     if name.startswith("replaymodel:"):
         return NumpyReplayPolicy(name.split(":", 1)[1])
+    if name.startswith("breakmodel:"):
+        return NumpyBreakPolicy(name.split(":", 1)[1])
     if name.startswith("ppo:"):
         return StableBaselinesFleePolicy(name.split(":", 1)[1])
     raise ValueError(f"unknown policy {name}")
@@ -56,6 +59,7 @@ def empty_stats(policy_names):
             "cleared": 0,
             "replay_decisions": 0,
             "replay_draws": 0,
+            "break_decisions": 0,
             "score": 0.0,
             "score_values": [],
         }
@@ -97,6 +101,7 @@ def _run_benchmark_with_cache(policy_names, games, seed_start, policy_cache, gam
             s["cleared"] += int(j.dans_le_dj)
             s["replay_decisions"] += getattr(j, "replay_decisions", 0)
             s["replay_draws"] += getattr(j, "replay_draws", 0)
+            s["break_decisions"] += getattr(j, "break_decisions", 0)
             score = float(j.score_final if getattr(j, "compte_au_score", False) else 0.0)
             s["score"] += score
             s["score_values"].append(score)
@@ -164,7 +169,7 @@ def pct_ci(success, n):
 def print_stats(stats):
     print(
         f"{'Policy':<18} {'Played':>8} {'Win%':>12} {'Death%':>8} {'Flee%':>8} "
-        f"{'Clear%':>8} {'Draw%':>8} {'AvgScore':>9} {'MedScore':>9}"
+        f"{'Clear%':>8} {'Draw%':>8} {'Breaks':>8} {'AvgScore':>9} {'MedScore':>9}"
     )
     for name, s in stats.items():
         n = max(1, s["played"])
@@ -176,7 +181,7 @@ def print_stats(stats):
             f"{name:<18} {s['played']:>8} {win:>7.2f}+/-{win_ci:<4.2f} "
             f"{s['death']/n*100:>8.2f} {s['fled']/n*100:>8.2f} "
             f"{s['cleared']/n*100:>8.2f} {s['replay_draws']/draw_n*100:>8.2f} "
-            f"{s['score']/n:>9.3f} {median:>9.3f}"
+            f"{s['break_decisions']/n:>8.3f} {s['score']/n:>9.3f} {median:>9.3f}"
         )
 
 
@@ -189,7 +194,7 @@ def main():
         "--policies",
         nargs="+",
         default=["ev", "random"],
-        help="ev, seuils, random, model:path.json, fastppo:path.json, replaymodel:path.json, or ppo:path.zip",
+        help="ev, seuils, random, model:path.json, fastppo:path.json, replaymodel:path.json, breakmodel:path.json, or ppo:path.zip",
     )
     args = parser.parse_args()
     processes = args.processes

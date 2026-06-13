@@ -60,6 +60,7 @@ class Joueur:
         self.rejoue = False # doit rejouer, reset en debut de tour
         self.replay_decisions = 0
         self.replay_draws = 0
+        self.break_decisions = 0
         self.doit_passer = False # a trigger un effet qui le force a passer
         self.passe_son_tour = False # saute completement son tour sans piocher (Lapin Blanc)
         self.monstres_ajoutes_ce_tour = 0
@@ -630,14 +631,7 @@ class Joueur:
             self.pv_total -= objet.pv_bonus
             log_details.append(f"L'objet casse {objet.nom} donnait {objet.pv_bonus}PV ca fait ca de moins. PV restant {self.pv_total}PV")
 
-    def decideBriseObjet(self, jeu, log_details):
-        """Brise l'objet le moins utile, sans se tuer si possible.
-
-        La valeur d'un objet cibleur (types_tags/puissance_tags) fond avec le
-        nombre de proies restantes au Donjon : un Glaive d'argent sans Vampire
-        restant ne vaut plus rien, quelle que soit sa priorite. Valide par A/B
-        en self-play contre les formes additives et les malus mousse/PV,
-        qui n'apportent rien."""
+    def _choose_break_object_heuristic(self, jeu):
         objets_intacts = [o for o in self.objets if o.intact]
         if not objets_intacts:
             return None
@@ -653,7 +647,33 @@ class Joueur:
                          or getattr(c, 'puissance_initiale', None) in o.puissance_tags)
             return o.priorite * cibles / (1 + cibles)
 
-        objet = min(objets_intacts, key=lambda o: (o.pv_bonus >= self.pv_total, valeur(o)))
+        return min(objets_intacts, key=lambda o: (o.pv_bonus >= self.pv_total, valeur(o)))
+
+    def decideBriseObjet(self, jeu, log_details):
+        """Brise l'objet le moins utile, sans se tuer si possible.
+
+        La valeur d'un objet cibleur (types_tags/puissance_tags) fond avec le
+        nombre de proies restantes au Donjon : un Glaive d'argent sans Vampire
+        restant ne vaut plus rien, quelle que soit sa priorite. Valide par A/B
+        en self-play contre les formes additives et les malus mousse/PV,
+        qui n'apportent rien."""
+        objets_intacts = [o for o in self.objets if o.intact]
+        if not objets_intacts:
+            return None
+        self.break_decisions += 1
+        policy = getattr(self, 'policy', None)
+        if policy is not None:
+            legal_actions = [self.objets.index(o) for o in objets_intacts]
+            action = policy.choose_item_to_break({
+                'player': self,
+                'game': jeu,
+                'log_details': log_details,
+            }, legal_actions)
+            objet = self.objets[int(action)] if int(action) in legal_actions else self._choose_break_object_heuristic(jeu)
+        else:
+            objet = self._choose_break_object_heuristic(jeu)
+        if objet is None:
+            return None
         objet.destroy(self, jeu, log_details)
         self._gerer_pv_bonus(objet, log_details)
         return objet

@@ -5,6 +5,7 @@ import numpy as np
 
 from .flee_features import extract_flee_observation, observation_size, sigmoid
 from .replay_features import extract_replay_observation, observation_size as replay_observation_size
+from .break_features import MAX_OBJECTS, extract_break_observation, observation_size as break_observation_size
 
 FLEE_ACTION_CONTINUE = 0
 FLEE_ACTION_ATTEMPT = 1
@@ -48,6 +49,12 @@ class HeuristicPolicy(GamePolicy):
         jeu = state["game"]
         return REPLAY_ACTION_DRAW if joueur._decision_replay_heuristic(jeu, state.get("log_details", [])) else REPLAY_ACTION_PASS
 
+    def choose_item_to_break(self, state, legal_actions):
+        objet = state["player"]._choose_break_object_heuristic(state["game"])
+        if objet is None:
+            return legal_actions[0] if legal_actions else 0
+        return state["player"].objets.index(objet)
+
 
 class RandomPolicy(GamePolicy):
     def __init__(self, attempt_probability=0.5, rng=None):
@@ -68,6 +75,9 @@ class RandomPolicy(GamePolicy):
             return REPLAY_ACTION_PASS
         return REPLAY_ACTION_DRAW if self.rng.random() < 0.5 else REPLAY_ACTION_PASS
 
+    def choose_item_to_break(self, state, legal_actions):
+        return self.rng.choice(list(legal_actions)) if legal_actions else 0
+
 
 class ScriptedPolicy(GamePolicy):
     def __init__(self, actions, fallback=None):
@@ -86,6 +96,9 @@ class ScriptedPolicy(GamePolicy):
 
     def decide_replay(self, state, legal_actions):
         return self.fallback.decide_replay(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        return self.fallback.choose_item_to_break(state, legal_actions)
 
 
 class ModelPolicy(GamePolicy):
@@ -112,6 +125,12 @@ class ModelPolicy(GamePolicy):
         obs = extract_flee_observation(state["player"], state["game"])
         p = sigmoid(float(obs @ self.weights + self.bias))
         return FLEE_ACTION_ATTEMPT if p >= self.threshold else FLEE_ACTION_CONTINUE
+
+    def decide_replay(self, state, legal_actions):
+        return HeuristicPolicy("ev").decide_replay(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)
 
 
 class NumpyPPOFleePolicy(GamePolicy):
@@ -142,6 +161,12 @@ class NumpyPPOFleePolicy(GamePolicy):
         logits = self.action_weight @ x + self.action_bias
         action = int(np.argmax(logits))
         return action if action in legal_actions else FLEE_ACTION_CONTINUE
+
+    def decide_replay(self, state, legal_actions):
+        return HeuristicPolicy("ev").decide_replay(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)
 
 
 class NumpyReplayPolicy(NumpyPPOFleePolicy):
@@ -177,6 +202,50 @@ class NumpyReplayPolicy(NumpyPPOFleePolicy):
         action = int(np.argmax(logits))
         return action if action in legal_actions else REPLAY_ACTION_PASS
 
+    def choose_item_to_break(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)
+
+
+class NumpyBreakPolicy(GamePolicy):
+    def __init__(self, model_path, flee_policy=None, replay_policy=None):
+        with open(model_path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        self.layers = [
+            (
+                np.asarray(layer["weight"], dtype=np.float32),
+                np.asarray(layer["bias"], dtype=np.float32),
+            )
+            for layer in payload["policy_layers"]
+        ]
+        self.action_weight = np.asarray(payload["action_weight"], dtype=np.float32)
+        self.action_bias = np.asarray(payload["action_bias"], dtype=np.float32)
+        self.flee_policy = flee_policy or HeuristicPolicy("ev")
+        self.replay_policy = replay_policy or HeuristicPolicy("ev")
+        if self.layers[0][0].shape[1] != break_observation_size():
+            raise ValueError(
+                f"model expects {self.layers[0][0].shape[1]} features, "
+                f"got {break_observation_size()}"
+            )
+
+    def decide_flee(self, state, legal_actions):
+        return self.flee_policy.decide_flee(state, legal_actions)
+
+    def decide_replay(self, state, legal_actions):
+        return self.replay_policy.decide_replay(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        if not legal_actions:
+            return 0
+        x = extract_break_observation(state["player"], state["game"])
+        for weight, bias in self.layers:
+            x = np.tanh(weight @ x + bias)
+        logits = self.action_weight @ x + self.action_bias
+        masked = np.full(MAX_OBJECTS, -1.0e9, dtype=np.float32)
+        for action in legal_actions:
+            if 0 <= int(action) < MAX_OBJECTS:
+                masked[int(action)] = logits[int(action)]
+        return int(np.argmax(masked))
+
 
 class StableBaselinesFleePolicy(GamePolicy):
     def __init__(self, model_path, deterministic=True):
@@ -192,3 +261,9 @@ class StableBaselinesFleePolicy(GamePolicy):
         action, _ = self.model.predict(obs, deterministic=self.deterministic)
         action = int(action)
         return action if action in legal_actions else FLEE_ACTION_CONTINUE
+
+    def decide_replay(self, state, legal_actions):
+        return HeuristicPolicy("ev").decide_replay(state, legal_actions)
+
+    def choose_item_to_break(self, state, legal_actions):
+        return HeuristicPolicy("ev").choose_item_to_break(state, legal_actions)

@@ -184,7 +184,78 @@ Success criteria:
 - Equal or better winrate than current object-breaking heuristic.
 - Lower death rate in Limon and object-loss-heavy scenarios.
 
-### Stage 4: Learn Draft Picking
+### Stage 4: Learn Full Item Use
+
+Purpose: make every item hook visible to the policy layer before draft values are
+learned. Draft cannot be trusted until the AI can actually use the items it
+picks.
+
+Current learned coverage:
+
+- `en_combat`: 172 item classes routed through `choose_item_activation`;
+- `en_survie`: 11 item classes routed through `choose_item_activation`;
+- survival labels currently preserve baseline behavior by treating survival
+  activation as "use".
+
+Missing item decision surfaces:
+
+- `en_fuite`: 6 item classes;
+- `debut_tour`: 26 item classes;
+- `fin_tour`: 11 item classes;
+- `en_vaincu`: 17 item classes;
+- `en_rencontre`: 5 item classes;
+- `en_rencontre_event`: 4 item classes;
+- `en_subit_dommages`: 5 item classes;
+- `en_activated`: 5 item classes;
+- `en_mort`: 3 item classes;
+- `en_fuite_definitive`: 4 item classes;
+- `en_roll`: 6 item classes.
+
+Important distinction:
+
+- Some hooks are real optional item-use decisions, such as spending an item at
+  the start of turn, after victory, during flee, or when taking damage.
+- Some hooks are passive reactions or mandatory consequences, such as repairing
+  after a trigger, medal protection, or score modifiers. These should be routed
+  through the rules engine and counted as implemented, but not exposed as model
+  actions unless there is a legal "use / skip" choice.
+
+Tasks:
+
+- Audit every non-combat item hook and classify it as one of:
+  - optional activation;
+  - forced/passive trigger;
+  - target choice;
+  - replacement/discard/repair choice;
+  - random effect with no player decision.
+- Add explicit policy methods only where the player has agency. Likely methods:
+  - `choose_item_activation`;
+  - `choose_repair_target`;
+  - `choose_discard_target`;
+  - `choose_replace_target`;
+  - `choose_roll_modifier`;
+  - `choose_item_target`.
+- Keep passive hooks deterministic and rule-owned.
+- Add counters per hook so benchmarks can report item-use coverage beyond the
+  current aggregate `Use%`.
+- Build a full item-use environment that can pause at any optional item decision
+  and replay prior actions.
+- Start with supervised imitation of the current heuristic behavior.
+- Fine-tune only after the classifier proves that mandatory/passive effects are
+  not being skipped.
+- Add focused regression tests for representative items from every hook group.
+
+Success criteria:
+
+- Every one of the 265 item classes is either policy-routed or explicitly marked
+  passive/no-decision.
+- No item hook is silently skipped by learned policies.
+- Full item-use model matches or beats the combat+survival item model in
+  held-out benchmarks.
+- Benchmark reports per-hook decision counts and use rates.
+- Draft training is not started until this stage has a coverage report.
+
+### Stage 5: Learn Draft Picking
 
 Purpose: replace `choisirObjet(...)` and later `draft_soiree(...)`.
 
@@ -217,9 +288,9 @@ Training approach:
 Success criteria:
 
 - Better item pick winrate than current `draft.py` priors in held-out seeds.
-- Better evening winrate than `party.py` draft heuristic after Stage 5.
+- Better evening winrate than `party.py` draft heuristic after Stage 6.
 
-### Stage 5: Full Evening Strategy
+### Stage 6: Full Evening Strategy
 
 Purpose: optimize the actual play mode with medals, hero levels, and multiple
 rounds.
@@ -252,7 +323,7 @@ Success criteria:
   `party.py` heuristic.
 - No degradation in obvious cases such as protecting medals when ahead.
 
-### Stage 6: Self-Play and Policy League
+### Stage 7: Self-Play and Policy League
 
 Purpose: avoid overfitting to the current heuristic AI.
 
@@ -362,8 +433,9 @@ Do not add these until the first environment wrapper is ready.
 6. Validate against `bench_fuite.py` style evaluation.
 7. Expand to replay/pass.
 8. Expand to object break/discard.
-9. Expand to draft.
-10. Expand to full evening self-play.
+9. Expand to full item-use coverage.
+10. Expand to draft.
+11. Expand to full evening self-play.
 
 ## Non-Goals
 

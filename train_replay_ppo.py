@@ -69,11 +69,12 @@ def main():
     parser.add_argument("--net-arch", default="128,128")
     parser.add_argument("--n-steps", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--opponent-league", default=None)
     args = parser.parse_args()
 
-    env = Monitor(GymReplayEnv(seed_start=args.seed))
+    env = Monitor(GymReplayEnv(seed_start=args.seed, opponent_league=args.opponent_league))
     if args.check_env:
-        check_env(GymReplayEnv(seed_start=args.seed), warn=True)
+        check_env(GymReplayEnv(seed_start=args.seed, opponent_league=args.opponent_league), warn=True)
 
     model = PPO(
         "MlpPolicy",

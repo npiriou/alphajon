@@ -395,21 +395,41 @@ class Prophete(Perso):
                     break
                 apercues.append(Jeu.donjon.prochaine_carte())
             legal_actions = tuple(range(1 << len(apercues)))
-            policy = getattr(joueur, 'policy', None)
-            if policy is not None:
-                action = int(policy.choose_scry_window_action({
-                    'player': joueur,
-                    'game': Jeu,
-                    'hero': self,
-                    'cards': apercues,
-                    'source': 'Prophete',
-                    'log_details': log_details,
-                }, legal_actions))
+            if hasattr(Jeu, 'choose_action'):
+                def fallback_scry():
+                    mask = 0
+                    for idx, c in enumerate(apercues):
+                        if hasattr(c, 'types') and not getattr(c, 'event', False) and c.puissance >= joueur.pv_total:
+                            mask |= 1 << idx
+                    return mask
+
+                action = int(Jeu.choose_action(
+                    'scry',
+                    joueur,
+                    legal_actions,
+                    'choose_scry_window_action',
+                    fallback=fallback_scry,
+                    hero=self,
+                    cards=apercues,
+                    source='Prophete',
+                    log_details=log_details,
+                ))
             else:
-                action = 0
-                for idx, c in enumerate(apercues):
-                    if hasattr(c, 'types') and not getattr(c, 'event', False) and c.puissance >= joueur.pv_total:
-                        action |= 1 << idx
+                policy = getattr(joueur, 'policy', None)
+                if policy is not None:
+                    action = int(policy.choose_scry_window_action({
+                        'player': joueur,
+                        'game': Jeu,
+                        'hero': self,
+                        'cards': apercues,
+                        'source': 'Prophete',
+                        'log_details': log_details,
+                    }, legal_actions))
+                else:
+                    action = 0
+                    for idx, c in enumerate(apercues):
+                        if hasattr(c, 'types') and not getattr(c, 'event', False) and c.puissance >= joueur.pv_total:
+                            action |= 1 << idx
             if action not in legal_actions:
                 action = 0
             a_reposer = []

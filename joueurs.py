@@ -306,16 +306,27 @@ class Joueur:
 
     def deciderDeRejouer(self, Jeu, log_details):
         self.replay_decisions += 1
-        policy = getattr(self, 'policy', None)
-        if policy is not None:
-            action = policy.decide_replay({
-                'player': self,
-                'game': Jeu,
-                'log_details': log_details,
-            }, (0, 1))
+        if hasattr(Jeu, 'choose_action'):
+            action = Jeu.choose_action(
+                'replay',
+                self,
+                (0, 1),
+                'decide_replay',
+                fallback=lambda: 1 if self._decision_replay_heuristic(Jeu, log_details) else 0,
+                log_details=log_details,
+            )
             draw = int(action) == 1
         else:
-            draw = self._decision_replay_heuristic(Jeu, log_details)
+            policy = getattr(self, 'policy', None)
+            if policy is not None:
+                action = policy.decide_replay({
+                    'player': self,
+                    'game': Jeu,
+                    'log_details': log_details,
+                }, (0, 1))
+                draw = int(action) == 1
+            else:
+                draw = self._decision_replay_heuristic(Jeu, log_details)
         if draw:
             self.replay_draws += 1
         return draw
@@ -600,18 +611,34 @@ class Joueur:
         # Coeur de la decision, selon la politique du joueur. Par defaut on garde
         # strictement l'ancien comportement; les environnements ML peuvent poser
         # self.policy pour piloter uniquement ce point de decision.
-        policy = getattr(self, 'policy', None)
-        if policy is not None:
-            action = policy.decide_flee({
-                'player': self,
-                'game': Jeu,
-                'log_details': log_details,
-            }, (0, 1))
+        if hasattr(Jeu, 'choose_action'):
+            def fallback_flee():
+                if self.politique_fuite == 'ev':
+                    return 1 if self._decision_fuite_ev(Jeu) else 0
+                return 1 if self._decision_fuite_seuils(Jeu) else 0
+
+            action = Jeu.choose_action(
+                'flee',
+                self,
+                (0, 1),
+                'decide_flee',
+                fallback=fallback_flee,
+                log_details=log_details,
+            )
             veut_fuir = int(action) == 1
-        elif self.politique_fuite == 'ev':
-            veut_fuir = self._decision_fuite_ev(Jeu)
         else:
-            veut_fuir = self._decision_fuite_seuils(Jeu)
+            policy = getattr(self, 'policy', None)
+            if policy is not None:
+                action = policy.decide_flee({
+                    'player': self,
+                    'game': Jeu,
+                    'log_details': log_details,
+                }, (0, 1))
+                veut_fuir = int(action) == 1
+            elif self.politique_fuite == 'ev':
+                veut_fuir = self._decision_fuite_ev(Jeu)
+            else:
+                veut_fuir = self._decision_fuite_seuils(Jeu)
         if not veut_fuir:
             return False
 
@@ -665,17 +692,32 @@ class Joueur:
         if not objets_intacts:
             return None
         self.break_decisions += 1
-        policy = getattr(self, 'policy', None)
-        if policy is not None:
-            legal_actions = [self.objets.index(o) for o in objets_intacts]
-            action = policy.choose_item_to_break({
-                'player': self,
-                'game': jeu,
-                'log_details': log_details,
-            }, legal_actions)
+        legal_actions = [self.objets.index(o) for o in objets_intacts]
+        if hasattr(jeu, 'choose_action'):
+            def fallback_break():
+                chosen = self._choose_break_object_heuristic(jeu)
+                return self.objets.index(chosen) if chosen is not None else legal_actions[0]
+
+            action = jeu.choose_action(
+                'break',
+                self,
+                legal_actions,
+                'choose_item_to_break',
+                fallback=fallback_break,
+                log_details=log_details,
+            )
             objet = self.objets[int(action)] if int(action) in legal_actions else self._choose_break_object_heuristic(jeu)
         else:
-            objet = self._choose_break_object_heuristic(jeu)
+            policy = getattr(self, 'policy', None)
+            if policy is not None:
+                action = policy.choose_item_to_break({
+                    'player': self,
+                    'game': jeu,
+                    'log_details': log_details,
+                }, legal_actions)
+                objet = self.objets[int(action)] if int(action) in legal_actions else self._choose_break_object_heuristic(jeu)
+            else:
+                objet = self._choose_break_object_heuristic(jeu)
         if objet is None:
             return None
         objet.destroy(self, jeu, log_details)

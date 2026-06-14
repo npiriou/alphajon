@@ -45,6 +45,10 @@ class _ItemControlledPolicy:
         if self.index < len(self.env._actions):
             action = int(self.env._actions[self.index])
             self.index += 1
+            if self.index == len(self.env._actions) and self.env.rollout_seed_after_actions is not None:
+                seed = int(self.env.rollout_seed_after_actions)
+                random.seed(seed)
+                np.random.seed(seed & 0xFFFFFFFF)
             return action if action in legal_actions else 0
         if self.env.continue_with_rollout_policy:
             return self.env.rollout_policy.choose_item_activation(state, legal_actions)
@@ -79,6 +83,7 @@ class ItemActivationEnv:
         self._actions = []
         self.rollout_policy = HeuristicPolicy("ev")
         self.continue_with_rollout_policy = False
+        self.rollout_seed_after_actions = None
         self.last_obs = np.zeros(self.observation_shape, dtype=np.float32)
         self.last_info = {}
         self.terminal_players = None
@@ -98,9 +103,10 @@ class ItemActivationEnv:
             return obs, 0.0, False, False, info
         return obs, self._reward(), True, False, info
 
-    def run_to_terminal(self, seed, actions, rollout_policy=None):
+    def run_to_terminal(self, seed, actions, rollout_policy=None, rollout_seed_after_actions=None):
         previous_policy = self.rollout_policy
         previous_continue = self.continue_with_rollout_policy
+        previous_rollout_seed = self.rollout_seed_after_actions
         try:
             self.seed_value = int(seed)
             self._actions = list(actions)
@@ -109,6 +115,7 @@ class ItemActivationEnv:
             if rollout_policy is not None:
                 self.rollout_policy = rollout_policy
             self.continue_with_rollout_policy = True
+            self.rollout_seed_after_actions = rollout_seed_after_actions
             obs, info = self._replay()
             if self.terminal_players is None:
                 raise RuntimeError("rollout policy did not resolve all item activation decisions")
@@ -116,6 +123,7 @@ class ItemActivationEnv:
         finally:
             self.rollout_policy = previous_policy
             self.continue_with_rollout_policy = previous_continue
+            self.rollout_seed_after_actions = previous_rollout_seed
 
     def _build_game(self):
         random.seed(self.seed_value)

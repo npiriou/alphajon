@@ -1,0 +1,17 @@
+{
+  "opponents": [
+    {
+      "name": "ev",
+      "weight": 4
+    },
+    {
+      "name": "current",
+      "weight": 4,
+      "policy": "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json"
+    },
+    {
+      "name": "random",
+      "weight": 1
+    }
+  ]
+}

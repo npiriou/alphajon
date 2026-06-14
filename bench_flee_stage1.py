@@ -344,6 +344,42 @@ def print_stats(stats):
             print(f"{'':<18} item hooks: " + ", ".join(parts))
 
 
+def check_candidate_promotion(stats, candidate, baselines=None, min_winrate_edge=0.0, max_deathrate_edge=None):
+    if candidate not in stats:
+        raise ValueError(f"candidate policy is not in benchmark: {candidate}")
+    baseline_names = list(baselines or [name for name in stats if name != candidate])
+    if not baseline_names:
+        raise ValueError("promotion check needs at least one baseline")
+
+    candidate_stats = stats[candidate]
+    candidate_played = max(1, candidate_stats["played"])
+    candidate_winrate = candidate_stats["win"] / candidate_played * 100.0
+    candidate_deathrate = candidate_stats["death"] / candidate_played * 100.0
+    failures = []
+    for baseline in baseline_names:
+        if baseline not in stats:
+            failures.append(f"missing baseline: {baseline}")
+            continue
+        baseline_stats = stats[baseline]
+        baseline_played = max(1, baseline_stats["played"])
+        baseline_winrate = baseline_stats["win"] / baseline_played * 100.0
+        baseline_deathrate = baseline_stats["death"] / baseline_played * 100.0
+        required_winrate = baseline_winrate + float(min_winrate_edge)
+        if candidate_winrate < required_winrate:
+            failures.append(
+                f"{candidate} winrate {candidate_winrate:.2f}% < {baseline} {baseline_winrate:.2f}% "
+                f"+ edge {float(min_winrate_edge):.2f}%"
+            )
+        if max_deathrate_edge is not None:
+            allowed_deathrate = baseline_deathrate + float(max_deathrate_edge)
+            if candidate_deathrate > allowed_deathrate:
+                failures.append(
+                    f"{candidate} deathrate {candidate_deathrate:.2f}% > {baseline} {baseline_deathrate:.2f}% "
+                    f"+ edge {float(max_deathrate_edge):.2f}%"
+                )
+    return failures
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stage 1 flee policy benchmark.")
     parser.add_argument("--games", type=int, default=500)
@@ -352,6 +388,10 @@ def main():
     parser.add_argument("--scry-items-per-player", type=int, default=0)
     parser.add_argument("--scry-hero-probability", type=float, default=0.0)
     parser.add_argument("--required-winrate", type=float, default=None)
+    parser.add_argument("--candidate", default=None)
+    parser.add_argument("--promotion-baselines", nargs="*", default=None)
+    parser.add_argument("--min-winrate-edge", type=float, default=0.0)
+    parser.add_argument("--max-deathrate-edge", type=float, default=None)
     parser.add_argument(
         "--policies",
         nargs="+",
@@ -381,6 +421,19 @@ def main():
             for name, winrate in failed:
                 print(f"FAILED required winrate {args.required_winrate:.2f}%: {name} got {winrate:.2f}%")
             raise SystemExit(1)
+    if args.candidate is not None:
+        failures = check_candidate_promotion(
+            stats,
+            args.candidate,
+            baselines=args.promotion_baselines,
+            min_winrate_edge=args.min_winrate_edge,
+            max_deathrate_edge=args.max_deathrate_edge,
+        )
+        if failures:
+            for failure in failures:
+                print(f"FAILED promotion: {failure}")
+            raise SystemExit(1)
+        print(f"PASSED promotion: {args.candidate}")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from item_env import ItemActivationEnv
+from league_policy import LeaguePolicySampler
 from objets import objets_disponibles
 from policies import (
     CombinedPolicy,
@@ -52,6 +53,10 @@ def build_rollout_policy(mode):
     return CombinedPolicy(flee_policy=flee, replay_policy=replay, break_policy=break_policy, item_policy=item)
 
 
+def build_opponent_sampler(path):
+    return LeaguePolicySampler.from_json(path) if path else None
+
+
 def terminal_value(info, reward, win_weight, death_weight, score_weight):
     value = float(reward)
     if info["win"]:
@@ -73,15 +78,37 @@ def evaluate_action(
     score_weight,
     scry_items_per_player,
     scry_hero_probability,
+    opponent_policy_sampler,
+    rollouts_per_action=1,
 ):
-    env = ItemActivationEnv(
-        forced_item_class=forced_item_class,
-        scry_items_per_player=scry_items_per_player,
-        scry_hero_probability=scry_hero_probability,
-    )
-    _, reward, info = env.run_to_terminal(seed, list(prefix) + [int(action)], rollout_policy=rollout_policy)
-    value = terminal_value(info, reward, win_weight, death_weight, score_weight)
-    return value, reward, info
+    values = []
+    rewards = []
+    infos = []
+    for rollout_idx in range(max(1, int(rollouts_per_action))):
+        env = ItemActivationEnv(
+            forced_item_class=forced_item_class,
+            scry_items_per_player=scry_items_per_player,
+            scry_hero_probability=scry_hero_probability,
+            opponent_policy_sampler=opponent_policy_sampler,
+        )
+        rollout_seed = None
+        if int(rollouts_per_action) > 1:
+            rollout_seed = int(seed) + 1000003 * (rollout_idx + 1) + 9176 * int(action)
+        _, reward, info = env.run_to_terminal(
+            seed,
+            list(prefix) + [int(action)],
+            rollout_policy=rollout_policy,
+            rollout_seed_after_actions=rollout_seed,
+        )
+        values.append(terminal_value(info, reward, win_weight, death_weight, score_weight))
+        rewards.append(float(reward))
+        infos.append(info)
+    merged = dict(infos[-1])
+    merged["win_rate"] = float(np.mean([1.0 if info["win"] else 0.0 for info in infos]))
+    merged["death_rate"] = float(np.mean([1.0 if info["death"] else 0.0 for info in infos]))
+    merged["win"] = merged["win_rate"] >= 0.5
+    merged["death"] = merged["death_rate"] >= 0.5
+    return float(np.mean(values)), float(np.mean(rewards)), merged
 
 
 def collect_dataset(
@@ -98,9 +125,12 @@ def collect_dataset(
     record_focus_only,
     scry_items_per_player,
     scry_hero_probability,
+    opponent_league,
+    rollouts_per_action,
     report_every,
 ):
     rollout_policy = build_rollout_policy(rollout_mode)
+    opponent_policy_sampler = build_opponent_sampler(opponent_league)
     focus = {item.strip() for item in (focus_items or []) if item.strip()}
     xs = []
     ys = []
@@ -133,6 +163,7 @@ def collect_dataset(
             forced_item_class=forced_cls,
             scry_items_per_player=scry_items_per_player,
             scry_hero_probability=scry_hero_probability,
+            opponent_policy_sampler=opponent_policy_sampler,
         )
         env.rollout_policy = rollout_policy
         obs, _ = env.reset(seed=seed)
@@ -174,6 +205,8 @@ def collect_dataset(
                 score_weight,
                 scry_items_per_player,
                 scry_hero_probability,
+                opponent_policy_sampler,
+                rollouts_per_action,
             )
             v1, r1, i1 = evaluate_action(
                 env.seed_value,
@@ -186,6 +219,8 @@ def collect_dataset(
                 score_weight,
                 scry_items_per_player,
                 scry_hero_probability,
+                opponent_policy_sampler,
+                rollouts_per_action,
             )
             if force_survival and hook == "en_survie":
                 label = 1
@@ -244,6 +279,8 @@ def collect_dataset(
         "record_focus_only": bool(record_focus_only),
         "scry_items_per_player": int(scry_items_per_player),
         "scry_hero_probability": float(scry_hero_probability),
+        "opponent_league": opponent_league,
+        "rollouts_per_action": int(rollouts_per_action),
         "coverage": [
             {
                 "item_class": item_class,
@@ -304,6 +341,8 @@ def merge_datasets(
     record_focus_only,
     scry_items_per_player,
     scry_hero_probability,
+    opponent_league,
+    rollouts_per_action,
 ):
     keys = (
         "x",
@@ -362,6 +401,8 @@ def merge_datasets(
         "record_focus_only": bool(record_focus_only),
         "scry_items_per_player": int(scry_items_per_player),
         "scry_hero_probability": float(scry_hero_probability),
+        "opponent_league": opponent_league,
+        "rollouts_per_action": int(rollouts_per_action),
         "coverage": [
             {
                 "item_class": item_class,
@@ -389,6 +430,8 @@ def collect_dataset_parallel(
     record_focus_only,
     scry_items_per_player,
     scry_hero_probability,
+    opponent_league,
+    rollouts_per_action,
     report_every,
     processes,
 ):
@@ -407,6 +450,8 @@ def collect_dataset_parallel(
             record_focus_only,
             scry_items_per_player,
             scry_hero_probability,
+            opponent_league,
+            rollouts_per_action,
             report_every,
         )
     base, rest = divmod(samples, processes)
@@ -431,6 +476,8 @@ def collect_dataset_parallel(
                 record_focus_only,
                 scry_items_per_player,
                 scry_hero_probability,
+                opponent_league,
+                rollouts_per_action,
                 report_every if idx == 0 else 0,
             )
         )
@@ -451,6 +498,8 @@ def collect_dataset_parallel(
         record_focus_only,
         scry_items_per_player,
         scry_hero_probability,
+        opponent_league,
+        rollouts_per_action,
     )
 
 
@@ -478,6 +527,8 @@ def main():
     )
     parser.add_argument("--scry-items-per-player", type=int, default=0)
     parser.add_argument("--scry-hero-probability", type=float, default=0.0)
+    parser.add_argument("--opponent-league", default=None)
+    parser.add_argument("--rollouts-per-action", type=int, default=1)
     parser.add_argument("--processes", type=int, default=1)
     parser.add_argument("--report-every", type=int, default=5000)
     args = parser.parse_args()
@@ -501,6 +552,8 @@ def main():
         record_focus_only=args.record_focus_only,
         scry_items_per_player=args.scry_items_per_player,
         scry_hero_probability=args.scry_hero_probability,
+        opponent_league=args.opponent_league,
+        rollouts_per_action=args.rollouts_per_action,
         report_every=args.report_every,
         processes=processes,
     )

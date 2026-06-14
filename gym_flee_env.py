@@ -5,18 +5,28 @@ import numpy as np
 from gymnasium import spaces
 
 from flee_env import FleeEnv
+from league_policy import LeaguePolicySampler
 from policies.flee_features import observation_size
 
 
 class GymFleeEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, nb_joueurs=4, controlled_seat=0, pv_min_fuite=6, seed_start=300000):
+    def __init__(
+        self,
+        nb_joueurs=4,
+        controlled_seat=0,
+        pv_min_fuite=6,
+        seed_start=300000,
+        opponent_league=None,
+    ):
         super().__init__()
+        opponent_policy_sampler = LeaguePolicySampler.from_json(opponent_league) if opponent_league else None
         self.base_env = FleeEnv(
             nb_joueurs=nb_joueurs,
             controlled_seat=controlled_seat,
             pv_min_fuite=pv_min_fuite,
+            opponent_policy_sampler=opponent_policy_sampler,
         )
         self.action_space = spaces.Discrete(2)
         self.observation_space = spaces.Box(

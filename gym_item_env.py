@@ -5,6 +5,7 @@ import numpy as np
 from gymnasium import spaces
 
 from item_env import ItemActivationEnv
+from league_policy import LeaguePolicySampler
 from policies import CombinedPolicy, HeuristicPolicy, NumpyBreakPolicy, NumpyPPOFleePolicy, NumpyReplayPolicy
 from policies.item_features import observation_size
 
@@ -28,12 +29,15 @@ class GymItemActivationEnv(gym.Env):
         pv_min_fuite=6,
         seed_start=9000000,
         rollout_policy="current",
+        opponent_league=None,
     ):
         super().__init__()
+        opponent_policy_sampler = LeaguePolicySampler.from_json(opponent_league) if opponent_league else None
         self.base_env = ItemActivationEnv(
             nb_joueurs=nb_joueurs,
             controlled_seat=controlled_seat,
             pv_min_fuite=pv_min_fuite,
+            opponent_policy_sampler=opponent_policy_sampler,
         )
         self.base_env.rollout_policy = build_non_item_rollout_policy(rollout_policy)
         self.action_space = spaces.Discrete(2)

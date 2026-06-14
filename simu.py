@@ -1,5 +1,7 @@
 import random
 import numpy as np
+from dataclasses import dataclass
+import threading
 
 from objets import *
 from objets import SANS_HOOK_OBJET
@@ -7,14 +9,276 @@ from joueurs import Joueur
 from monstres import CarteMonstre, DonjonDeck, CarteEvent
 from heros import *
 from heros import persos_disponibles, SANS_HOOK_PERSO
-def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
-    # arreter la simulation si on a un objet casse dans une main
+
+
+@dataclass
+class DecisionPoint:
+    kind: str
+    player_index: int
+    player: object
+    game: object
+    legal_actions: tuple
+    state: dict
+    policy_method: str = None
+    fallback: object = None
+
+
+class GameState:
+    def __init__(self, joueurs, donjon, objets_dispo):
+        self.defausse = []
+        self.tour = 0
+        self.execute_next_monster = False
+        self.traquenard_actif = False
+        self.traquenard_paye = False
+        self.kraken_vu = False
+        self.joueurs = joueurs
+        self.donjon = donjon
+        self.objets_dispo = objets_dispo
+        self.nb_joueurs = len(joueurs)
+        self.index_joueur = 0
+        self.current_player = None
+        self.current_card = None
+        self.phase = "setup"
+        self.pending_decision = None
+        self.last_decision = None
+        self.decision_handler = None
+
+    def decision_point(self, kind, player, legal_actions, **state):
+        player_index = self.joueurs.index(player)
+        payload = {
+            "player": player,
+            "game": self,
+            "phase": self.phase,
+            "card": self.current_card,
+        }
+        payload.update(state)
+        self.pending_decision = DecisionPoint(
+            kind=kind,
+            player_index=player_index,
+            player=player,
+            game=self,
+            legal_actions=tuple(legal_actions),
+            state=payload,
+        )
+        self.last_decision = self.pending_decision
+        return self.pending_decision
+
+    def choose_action(self, kind, player, legal_actions, policy_method, fallback=None, **state):
+        decision = self.decision_point(kind, player, legal_actions, **state)
+        decision.policy_method = policy_method
+        decision.fallback = fallback
+        if self.decision_handler is not None:
+            return self.decision_handler(decision)
+        policy = getattr(player, 'policy', None)
+        if policy is not None:
+            return getattr(policy, policy_method)(decision.state, decision.legal_actions)
+        if fallback is None:
+            return decision.legal_actions[0] if decision.legal_actions else 0
+        return fallback()
+
+
+def _assert_initial_items_intact(joueurs):
     for j in joueurs:
         for o in j.objets:
-            if not o.intact: 1/0
+            if not o.intact:
+                raise RuntimeError("cannot start a simulation with a broken item in hand")
 
+
+def _prepare_game(joueurs, donjon, objets_dispo):
+    _assert_initial_items_intact(joueurs)
+    donjon.melange()
+    jeu = GameState(joueurs, donjon, objets_dispo)
     log_details = []
-    nb_joueurs = len(joueurs)
+    for j in joueurs:
+        j.partie_joueurs = joueurs  # utilise par perdre_medaille (Parfum de Scandale)
+        j.trier_objets_par_priorite()
+        j.appliquer_panoplies(log_details)  # +2 PV par 3 objets de meme couleur (bonus d'avant-partie)
+        j.perso_obj.debut_partie(j, jeu, log_details)  # reset aussi l'etat une-fois-par-partie du perso
+        for objet in j.objets:
+            objet.debut_partie(j, jeu, log_details)
+    return jeu, log_details
+
+
+def _finish_game(jeu, log_details, log):
+    joueurs = jeu.joueurs
+    log_details.append(f"\nFIN DE LA PARTIE !\nCalcul des scores:")
+    # Calculer les scores finaux pour chaque joueur
+    for j in joueurs:
+        j.calculScoreFinal(log_details)
+        log_details.append(f"Score final: {j.nom} : {j.score_final}, {'mort' if not j.vivant else 'fui' if j.fuite_reussie else 'ponceur' if j.dans_le_dj else 'vivant'}.\n")
+    # Verifier si des joueurs sont arrives vivants au bout du donjon
+    joueurs_dans_le_dj = [j for j in joueurs if j.dans_le_dj]
+
+    # Loguer les joueurs toujours dans le donjon
+    if joueurs_dans_le_dj:
+        log_details.append("Les joueurs suivants ont poncÃ© le donjon :")
+        for j in joueurs_dans_le_dj:
+            log_details.append(f"- {j.nom}")
+
+    # Creer la liste finale des joueurs comptes
+    if joueurs_dans_le_dj:
+        joueurs_final = joueurs_dans_le_dj
+        log_details.append("Des joueurs sont arrivÃ©s vivants au bout du donjon, les fuyards sont exclus.")
+    else:
+        joueurs_final = [j for j in joueurs if j.vivant]
+        log_details.append("Aucun joueur n'a poncÃ© le donjon, tous les joueurs vivants comptent.")
+
+    # use items en_decompte
+    for j in joueurs:
+        for objet in j.objets:
+            objet.en_decompte(j, joueurs_final, log_details)
+
+    # marquage pour les stats externes (donjon.py): ce joueur pose-t-il son score ?
+    for j in joueurs:
+        j.compte_au_score = j in joueurs_final
+
+    # Loguer les joueurs exclus et inclus
+    for j in joueurs:
+        if j in joueurs_final:
+            log_details.append(f"{j.nom} est inclus dans le dÃ©compte final.")
+        else:
+            if not j.vivant:
+                log_details.append(f"{j.nom} est exclu du dÃ©compte final car il est mort.")
+            elif j.fuite_reussie:
+                log_details.append(f"{j.nom} est exclu du dÃ©compte final car il a fui le donjon.")
+            else:
+                log_details.append(f"{j.nom}  A BUG ?? {j.vivant} {j.fuite_reussie} {j.dans_le_dj}")
+
+    # Trier les joueurs par ordre de score decroissant
+    joueurs_final.sort(key=lambda j: j.score_final, reverse=True)
+
+    # Determiner le vainqueur apres avoir applique tous les effets de decompte
+    joueurs_egalite = [j for j in joueurs_final if j.score_final == joueurs_final[0].score_final]
+
+    if len(joueurs_egalite) > 1:
+        joueurs_avec_tiebreaker = [j for j in joueurs if j.tiebreaker and j.vivant]
+        if joueurs_avec_tiebreaker:
+            vainqueur = joueurs_avec_tiebreaker[0]
+            log_details.append(f"{vainqueur.nom} remporte la manche grÃ¢ce Ã  son avantage en cas d'Ã©galitÃ©.")
+        else:
+            vainqueur = random.choice(joueurs_egalite)
+            log_details.append(f"{vainqueur.nom} remporte la manche suite Ã  un tirage au sort parmi les joueurs avec le mÃªme score.")
+    elif len(joueurs_egalite) == 1:
+        vainqueur = joueurs_egalite[0]
+    else:
+        vainqueur = None
+
+    # Afficher les resultats avec une medaille pour le vainqueur
+    for i, j in enumerate(joueurs_final):
+        medaille = "MEDAILLE" if j == vainqueur else ""
+        log_details.append(f"{j.nom} : {j.score_final} points, PV restant {j.pv_total}. {medaille}")
+
+    log_details.append("\n")
+
+    if log:
+        for detail in log_details:
+            print(detail)
+
+    return vainqueur, joueurs
+
+
+class GameEngine:
+    def __init__(self, joueurs, donjon, pv_min_fuite, objets_dispo, decision_handler=None):
+        self.state, self.log_details = _prepare_game(joueurs, donjon, objets_dispo)
+        self.state.decision_handler = decision_handler
+        self.pv_min_fuite = pv_min_fuite
+        self.vainqueur = None
+        self.terminal_players = None
+        self._thread = None
+        self._condition = threading.Condition()
+        self._waiting_decision = None
+        self._applied_action = None
+        self._thread_error = None
+        self._done = False
+
+    def run_until_terminal(self, log=True):
+        if self._thread is not None:
+            raise RuntimeError("cannot call run_until_terminal after step_until_decision")
+        self.vainqueur, self.terminal_players = _run_prepared_game(
+            self.state,
+            self.pv_min_fuite,
+            log=log,
+            log_details=self.log_details,
+        )
+        return self.vainqueur, self.terminal_players
+
+    def step_until_decision(self, log=False):
+        """Run the live game until it needs an external action.
+
+        Returns a DecisionPoint, or None when the game has reached terminal state.
+        Unlike the older Gym env replay approach, this keeps the current Python
+        game state alive and resumes it after apply_decision().
+        """
+        if self._thread is None:
+            self.state.decision_handler = self._pause_for_decision
+            self._thread = threading.Thread(
+                target=self._run_paused_loop,
+                kwargs={"log": log},
+                daemon=True,
+            )
+            self._thread.start()
+        with self._condition:
+            while self._waiting_decision is None and not self._done and self._thread_error is None:
+                self._condition.wait()
+            if self._thread_error is not None:
+                raise self._thread_error
+            return self._waiting_decision
+
+    def apply_decision(self, action):
+        with self._condition:
+            if self._waiting_decision is None:
+                raise RuntimeError("no pending decision to apply")
+            legal = self._waiting_decision.legal_actions
+            action = int(action)
+            if action not in legal:
+                raise ValueError(f"illegal action {action}; legal actions are {list(legal)}")
+            self._applied_action = action
+            self._waiting_decision = None
+            self.state.pending_decision = None
+            self._condition.notify_all()
+
+    @property
+    def done(self):
+        return self._done
+
+    def _run_paused_loop(self, log):
+        try:
+            self.vainqueur, self.terminal_players = _run_prepared_game(
+                self.state,
+                self.pv_min_fuite,
+                log=log,
+                log_details=self.log_details,
+            )
+        except BaseException as exc:
+            with self._condition:
+                self._thread_error = exc
+                self._condition.notify_all()
+            return
+        with self._condition:
+            self._done = True
+            self._waiting_decision = None
+            self.state.pending_decision = None
+            self._condition.notify_all()
+
+    def _pause_for_decision(self, decision):
+        with self._condition:
+            self._waiting_decision = decision
+            self._applied_action = None
+            self._condition.notify_all()
+            while self._applied_action is None:
+                self._condition.wait()
+            action = self._applied_action
+            self._applied_action = None
+            self._condition.notify_all()
+            return action
+
+
+def _run_prepared_game(Jeu, pv_min_fuite, log=True, log_details=None):
+    joueurs = Jeu.joueurs
+    donjon = Jeu.donjon
+    nb_joueurs = Jeu.nb_joueurs
+    if log_details is None:
+        log_details = []
 
     # tables de dispatch : pour chaque hook, les classes qui ne l'implementent pas
     # (on saute les appels no-op ; le filtre est par classe et applique a chaque
@@ -31,29 +295,7 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
     P_FUITE = SANS_HOOK_PERSO['en_fuite']
     P_DEBUT = SANS_HOOK_PERSO['debut_tour']; P_FIN = SANS_HOOK_PERSO['fin_tour']
 
-    donjon.melange()
-    class Jeu:
-        defausse = []
-        tour = 0
-        execute_next_monster = False
-        traquenard_actif = False
-        traquenard_paye = False
-        kraken_vu = False
-        donjon
-    Jeu.joueurs = joueurs
-    Jeu.donjon = donjon
-    Jeu.objets_dispo = objets_dispo
-    Jeu.nb_joueurs = nb_joueurs
-    log_details = []
-    index_joueur = 0  # Initialisation de l'index du joueur courant
-    
-    for j in joueurs:
-        j.partie_joueurs = joueurs  # utilise par perdre_medaille (Parfum de Scandale)
-        j.trier_objets_par_priorite()
-        j.appliquer_panoplies(log_details)  # +2 PV par 3 objets de meme couleur (bonus d'avant-partie)
-        j.perso_obj.debut_partie(j, Jeu, log_details)  # reset aussi l'etat une-fois-par-partie du perso
-        for objet in j.objets:
-            objet.debut_partie(j, Jeu, log_details)
+    Jeu.phase = "main_loop"
     
     if log:
         for detail in log_details:
@@ -75,15 +317,18 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
             break
 
         # Le joueur courant
-        while not joueurs[index_joueur].dans_le_dj:
-            index_joueur += 1
-            if index_joueur >= nb_joueurs:
-                index_joueur = 0
+        while not joueurs[Jeu.index_joueur].dans_le_dj:
+            Jeu.index_joueur += 1
+            if Jeu.index_joueur >= nb_joueurs:
+                Jeu.index_joueur = 0
             # Ajouter une vérification pour éviter une boucle infinie
             if all(not joueur.dans_le_dj for joueur in joueurs):
                 break
 
-        joueur = joueurs[index_joueur]
+        joueur = joueurs[Jeu.index_joueur]
+        Jeu.current_player = joueur
+        Jeu.current_card = None
+        Jeu.phase = "turn_start"
 
         if log:
             log_details.append(f"Tour de {joueur.nom} ({joueur.perso_obj.nom}), {joueur.pv_total}PV, {len(joueur.pile_monstres_vaincus)}MV {',qui rejoue' if joueur.rejoue else ''}")
@@ -112,13 +357,15 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
             joueur.passe_son_tour = False
             joueur.tour += 1
             log_details.append(f"{joueur.nom} saute son tour sans piocher.\n")
-            index_joueur += 1
-            if index_joueur >= nb_joueurs:
-                index_joueur = 0
+            Jeu.index_joueur += 1
+            if Jeu.index_joueur >= nb_joueurs:
+                Jeu.index_joueur = 0
             continue
 
         # Le joueur pioche une carte
+        Jeu.phase = "draw_card"
         carte = donjon.prochaine_carte()
+        Jeu.current_card = carte
         if carte is None:
             log_details.append("Le Donjon est vide. Fin de la partie.")
             break
@@ -130,6 +377,7 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
 
         joueur.jet_fuite_lance = False
 
+        Jeu.phase = "flee_decision"
         if joueur.deciderDeFuir(Jeu, log_details):
             # Tentative de fuite
             joueur.jet_fuite = joueur.rollDice(Jeu, log_details) + joueur.calculer_modificateurs()
@@ -150,6 +398,7 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
             log_details.append(f"tour {joueur.tour}. {joueur.nom} ({joueur.perso_obj.nom}) a pioché {carte.titre}.")
         effet_carte = carte.effet
         carte_ignoree = False
+        Jeu.phase = "resolve_card"
         if isinstance(carte, CarteEvent):
             Jeu.execute_next_monster = False
             Jeu.traquenard_actif = False
@@ -573,9 +822,9 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
                 #  carte_ignoree -> Kraken deja remis sous le donjon / Ange Gardien deja defausse)
                 if not carte.executed and not carte_ignoree and effet_carte != "MAUDIT" and carte not in joueur.pile_monstres_vaincus:
                     donjon.rajoute_en_haut_de_la_pile(carte)
-                index_joueur += 1
-                if index_joueur >= nb_joueurs:
-                    index_joueur = 0
+                Jeu.index_joueur += 1
+                if Jeu.index_joueur >= nb_joueurs:
+                    Jeu.index_joueur = 0
                 continue
             
             #use items en_vaincu
@@ -593,12 +842,15 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
             # repioche volontaire (IA): poncer quand on est en forme, chasser un combo multi-kill,
             # ou exploiter la connaissance de la prochaine carte (objets de divination)
             if (joueur.dans_le_dj and not joueur.rejoue and not Jeu.execute_next_monster
-                    and not joueur.doit_passer and joueur.deciderDeRejouer(Jeu, log_details)):
-                joueur.rejoue = True
+                    and not joueur.doit_passer):
+                Jeu.phase = "replay_decision"
+                if joueur.deciderDeRejouer(Jeu, log_details):
+                    joueur.rejoue = True
 
             # si le joueur est toujours la, et que soit il doit passer, soit il ne doit pas rejouer et il ne peut pas executer le prochain monstre
             #TODO: forcer la passe avec joueur.doit_passer, actuellement tlm passe sans se poser de question
             #probleme avec le scaphandre qui spam passe
+            Jeu.phase = "end_turn"
             if joueur.dans_le_dj and (not joueur.rejoue and not Jeu.execute_next_monster):
                 # il passe : sequence perso et objets fin du tour
                 if type(joueur.perso_obj) not in P_FIN:
@@ -611,89 +863,19 @@ def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
                 if len([joueur for joueur in joueurs if joueur.dans_le_dj]) > 1:
                     if log:
                         log_details.append(f"{joueur.nom} passe son tour.\n")
-                    index_joueur += 1
-                    if index_joueur >= nb_joueurs:
-                        index_joueur = 0
+                    Jeu.index_joueur += 1
+                    if Jeu.index_joueur >= nb_joueurs:
+                        Jeu.index_joueur = 0
             else:
                 # Le joueur rejoue
                 joueur.rejoue = True
 
-    log_details.append(f"\nFIN DE LA PARTIE !\nCalcul des scores:")
-    # Calculer les scores finaux pour chaque joueur
-    for j in joueurs:
-        j.calculScoreFinal(log_details)
-        log_details.append(f"Score final: {j.nom} : {j.score_final}, {'mort' if not j.vivant else 'fui' if j.fuite_reussie else 'ponceur' if j.dans_le_dj else 'vivant'}.\n")
-    # Vérifier si des joueurs sont arrivés vivants au bout du donjon
-    joueurs_dans_le_dj = [j for j in joueurs if j.dans_le_dj]
+    Jeu.phase = "finished"
+    return _finish_game(Jeu, log_details, log)
 
-    # Loguer les joueurs toujours dans le donjon
-    if joueurs_dans_le_dj:
-        log_details.append("Les joueurs suivants ont poncé le donjon :")
-        for j in joueurs_dans_le_dj:
-            log_details.append(f"- {j.nom}")
 
-    # Créer la liste finale des joueurs comptés
-    if joueurs_dans_le_dj:
-        joueurs_final = joueurs_dans_le_dj
-        log_details.append("Des joueurs sont arrivés vivants au bout du donjon, les fuyards sont exclus.")
-    else:
-        joueurs_final = [j for j in joueurs if j.vivant]
-        log_details.append("Aucun joueur n'a poncé le donjon, tous les joueurs vivants comptent.")
-
-    # use items en_decompte
-    for j in joueurs:
-        for objet in j.objets:
-            objet.en_decompte(j, joueurs_final, log_details)
-
-    # marquage pour les stats externes (donjon.py): ce joueur pose-t-il son score ?
-    for j in joueurs:
-        j.compte_au_score = j in joueurs_final
-
-    # Loguer les joueurs exclus et inclus
-    for j in joueurs:
-        if j in joueurs_final:
-            log_details.append(f"{j.nom} est inclus dans le décompte final.")
-        else:
-            if not j.vivant:
-                log_details.append(f"{j.nom} est exclu du décompte final car il est mort.")
-            elif j.fuite_reussie:
-                log_details.append(f"{j.nom} est exclu du décompte final car il a fui le donjon.")
-            else:
-                log_details.append(f"{j.nom}  A BUG ?? {j.vivant} {j.fuite_reussie} {j.dans_le_dj}")
-
-    # Trier les joueurs par ordre de score décroissant
-    joueurs_final.sort(key=lambda j: j.score_final, reverse=True)
-
-    # Déterminer le vainqueur après avoir appliqué tous les effets de décompte
-    joueurs_egalite = [j for j in joueurs_final if j.score_final == joueurs_final[0].score_final]
-
-    if len(joueurs_egalite) > 1:
-        joueurs_avec_tiebreaker = [j for j in joueurs if j.tiebreaker and j.vivant]
-        if joueurs_avec_tiebreaker:
-            vainqueur = joueurs_avec_tiebreaker[0]
-            log_details.append(f"{vainqueur.nom} remporte la manche grâce à son avantage en cas d'égalité.")
-        else:
-            vainqueur = random.choice(joueurs_egalite)
-            log_details.append(f"{vainqueur.nom} remporte la manche suite à un tirage au sort parmi les joueurs avec le même score.")
-    elif len(joueurs_egalite) == 1:
-        vainqueur = joueurs_egalite[0]
-    else:
-        vainqueur = None
-
-    # Afficher les résultats avec une médaille pour le vainqueur
-    for i, j in enumerate(joueurs_final):
-        medaille = "MEDAILLE" if j == vainqueur else ""
-        log_details.append(f"{j.nom} : {j.score_final} points, PV restant {j.pv_total}. {medaille}")
-
-    log_details.append("\n")
-
-    # Impression des logs (facultatif)
-    if log:
-        for detail in log_details:
-            print(detail)
-
-    # Retourner le joueur vainqueur s'il y en a un
-    return vainqueur, joueurs
+def ordonnanceur(joueurs, donjon, pv_min_fuite, objets_dispo, log=True):
+    return GameEngine(joueurs, donjon, pv_min_fuite, objets_dispo).run_until_terminal(log=log)
 
 
 
@@ -825,3 +1007,4 @@ def loguer_x_parties(x=1):
         deck = DonjonDeck()
         # Les objets restants dans objets_disponibles_partie sont passés à l'ordonnanceur
         ordonnanceur(joueurs, deck, seuil_pv_essai_fuite, objets_disponibles_partie, True) # log=True
+

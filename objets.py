@@ -193,20 +193,35 @@ class Objet:
     def en_combat(self, joueur, carte, Jeu, log_details):
         if self.intact and self.rules(joueur, carte, Jeu, log_details):
             _record_item_activation_decision(joueur, 'en_combat')
-            policy = getattr(joueur, 'policy', None)
-            if policy is not None:
-                action = policy.choose_item_activation({
-                    'player': joueur,
-                    'game': Jeu,
-                    'card': carte,
-                    'item': self,
-                    'hook': 'en_combat',
-                    'log_details': log_details,
-                }, (0, 1))
+            if hasattr(Jeu, 'choose_action'):
+                action = Jeu.choose_action(
+                    'item',
+                    joueur,
+                    (0, 1),
+                    'choose_item_activation',
+                    fallback=lambda: 1 if self.worthit(joueur, carte, Jeu, log_details) else 0,
+                    card=carte,
+                    item=self,
+                    hook='en_combat',
+                    log_details=log_details,
+                )
                 if int(action) != 1:
                     return
-            elif not self.worthit(joueur, carte, Jeu, log_details):
-                return
+            else:
+                policy = getattr(joueur, 'policy', None)
+                if policy is not None:
+                    action = policy.choose_item_activation({
+                        'player': joueur,
+                        'game': Jeu,
+                        'card': carte,
+                        'item': self,
+                        'hook': 'en_combat',
+                        'log_details': log_details,
+                    }, (0, 1))
+                    if int(action) != 1:
+                        return
+                elif not self.worthit(joueur, carte, Jeu, log_details):
+                    return
             _record_item_activation_use(joueur, 'en_combat')
             try:
                 self.combat_effet(joueur, carte, Jeu, log_details)
@@ -223,18 +238,33 @@ class Objet:
     def en_survie(self, joueur, carte, Jeu, log_details):
         if self.intact:
             _record_item_activation_decision(joueur, 'en_survie')
-            policy = getattr(joueur, 'policy', None)
-            if policy is not None:
-                action = policy.choose_item_activation({
-                    'player': joueur,
-                    'game': Jeu,
-                    'card': carte,
-                    'item': self,
-                    'hook': 'en_survie',
-                    'log_details': log_details,
-                }, (0, 1))
+            if hasattr(Jeu, 'choose_action'):
+                action = Jeu.choose_action(
+                    'item',
+                    joueur,
+                    (0, 1),
+                    'choose_item_activation',
+                    fallback=lambda: 1,
+                    card=carte,
+                    item=self,
+                    hook='en_survie',
+                    log_details=log_details,
+                )
                 if int(action) != 1:
                     return
+            else:
+                policy = getattr(joueur, 'policy', None)
+                if policy is not None:
+                    action = policy.choose_item_activation({
+                        'player': joueur,
+                        'game': Jeu,
+                        'card': carte,
+                        'item': self,
+                        'hook': 'en_survie',
+                        'log_details': log_details,
+                    }, (0, 1))
+                    if int(action) != 1:
+                        return
             _record_item_activation_use(joueur, 'en_survie')
             self.survie_effet(joueur, carte, Jeu, log_details)
 

@@ -74,11 +74,25 @@ def main():
     parser.add_argument("--n-steps", type=int, default=2048)
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--learning-rate", type=float, default=0.0001)
+    parser.add_argument("--opponent-league", default=None)
     args = parser.parse_args()
 
-    env = Monitor(GymItemActivationEnv(seed_start=args.seed, rollout_policy=args.rollout_policy))
+    env = Monitor(
+        GymItemActivationEnv(
+            seed_start=args.seed,
+            rollout_policy=args.rollout_policy,
+            opponent_league=args.opponent_league,
+        )
+    )
     if args.check_env:
-        check_env(GymItemActivationEnv(seed_start=args.seed, rollout_policy=args.rollout_policy), warn=True)
+        check_env(
+            GymItemActivationEnv(
+                seed_start=args.seed,
+                rollout_policy=args.rollout_policy,
+                opponent_league=args.opponent_league,
+            ),
+            warn=True,
+        )
 
     net_arch = parse_net_arch(args.net_arch)
     if args.load:

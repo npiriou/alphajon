@@ -21,14 +21,19 @@ from policies.item_features import FEATURE_VERSION, observation_size
 from train_item_model import state_from_replay
 
 
-def item_classes():
+def item_classes(focus_items=None):
+    focus = {item.strip() for item in (focus_items or []) if item.strip()}
     seen = set()
     classes = []
     for item in objets_disponibles:
         cls = type(item)
+        if focus and cls.__name__ not in focus and getattr(item, "nom", "") not in focus:
+            continue
         if cls not in seen:
             seen.add(cls)
             classes.append(cls)
+    if focus and not classes:
+        raise ValueError(f"no item classes matched focus list: {sorted(focus)}")
     return classes
 
 
@@ -57,8 +62,23 @@ def terminal_value(info, reward, win_weight, death_weight, score_weight):
     return value
 
 
-def evaluate_action(seed, prefix, action, forced_item_class, rollout_policy, win_weight, death_weight, score_weight):
-    env = ItemActivationEnv(forced_item_class=forced_item_class)
+def evaluate_action(
+    seed,
+    prefix,
+    action,
+    forced_item_class,
+    rollout_policy,
+    win_weight,
+    death_weight,
+    score_weight,
+    scry_items_per_player,
+    scry_hero_probability,
+):
+    env = ItemActivationEnv(
+        forced_item_class=forced_item_class,
+        scry_items_per_player=scry_items_per_player,
+        scry_hero_probability=scry_hero_probability,
+    )
     _, reward, info = env.run_to_terminal(seed, list(prefix) + [int(action)], rollout_policy=rollout_policy)
     value = terminal_value(info, reward, win_weight, death_weight, score_weight)
     return value, reward, info
@@ -74,9 +94,14 @@ def collect_dataset(
     death_weight,
     score_weight,
     force_survival,
+    focus_items,
+    record_focus_only,
+    scry_items_per_player,
+    scry_hero_probability,
     report_every,
 ):
     rollout_policy = build_rollout_policy(rollout_mode)
+    focus = {item.strip() for item in (focus_items or []) if item.strip()}
     xs = []
     ys = []
     seeds = []
@@ -96,7 +121,7 @@ def collect_dataset(
     coverage = Counter()
     positive_coverage = Counter()
     tied = 0
-    classes = item_classes()
+    classes = item_classes(focus_items)
     seed = int(seed_start)
     env_count = 0
 
@@ -104,7 +129,11 @@ def collect_dataset(
         forced_cls = None
         if forced_item_rounds > 0:
             forced_cls = classes[(env_count // forced_item_rounds) % len(classes)]
-        env = ItemActivationEnv(forced_item_class=forced_cls)
+        env = ItemActivationEnv(
+            forced_item_class=forced_cls,
+            scry_items_per_player=scry_items_per_player,
+            scry_hero_probability=scry_hero_probability,
+        )
         env.rollout_policy = rollout_policy
         obs, _ = env.reset(seed=seed)
         env_count += 1
@@ -123,26 +152,48 @@ def collect_dataset(
                 obs, _, done, _, _ = env.step(action)
                 continue
 
+            item = state["item"]
+            card = state["card"]
+            hook = state.get("hook", "")
+            item_name = getattr(item, "nom", type(item).__name__)
+            item_class = type(item).__name__
+            if record_focus_only and focus and item_class not in focus and item_name not in focus:
+                action = rollout_policy.choose_item_activation(state, legal_actions)
+                obs, _, done, _, _ = env.step(action)
+                continue
+
             prefix = list(env._actions)
             v0, r0, i0 = evaluate_action(
-                env.seed_value, prefix, 0, forced_cls, rollout_policy, win_weight, death_weight, score_weight
+                env.seed_value,
+                prefix,
+                0,
+                forced_cls,
+                rollout_policy,
+                win_weight,
+                death_weight,
+                score_weight,
+                scry_items_per_player,
+                scry_hero_probability,
             )
             v1, r1, i1 = evaluate_action(
-                env.seed_value, prefix, 1, forced_cls, rollout_policy, win_weight, death_weight, score_weight
+                env.seed_value,
+                prefix,
+                1,
+                forced_cls,
+                rollout_policy,
+                win_weight,
+                death_weight,
+                score_weight,
+                scry_items_per_player,
+                scry_hero_probability,
             )
-            if force_survival and state.get("hook", "") == "en_survie":
+            if force_survival and hook == "en_survie":
                 label = 1
             elif abs(v1 - v0) < margin:
                 label = 1 if i1["win"] and not i0["win"] else 0
                 tied += 1
             else:
                 label = 1 if v1 > v0 else 0
-
-            item = state["item"]
-            card = state["card"]
-            hook = state.get("hook", "")
-            item_name = getattr(item, "nom", type(item).__name__)
-            item_class = type(item).__name__
 
             xs.append(obs.copy())
             ys.append(label)
@@ -189,6 +240,10 @@ def collect_dataset(
         "death_weight": float(death_weight),
         "score_weight": float(score_weight),
         "force_survival": bool(force_survival),
+        "focus_items": list(focus_items or []),
+        "record_focus_only": bool(record_focus_only),
+        "scry_items_per_player": int(scry_items_per_player),
+        "scry_hero_probability": float(scry_hero_probability),
         "coverage": [
             {
                 "item_class": item_class,
@@ -245,6 +300,10 @@ def merge_datasets(
     death_weight,
     score_weight,
     force_survival,
+    focus_items,
+    record_focus_only,
+    scry_items_per_player,
+    scry_hero_probability,
 ):
     keys = (
         "x",
@@ -299,6 +358,10 @@ def merge_datasets(
         "death_weight": float(death_weight),
         "score_weight": float(score_weight),
         "force_survival": bool(force_survival),
+        "focus_items": list(focus_items or []),
+        "record_focus_only": bool(record_focus_only),
+        "scry_items_per_player": int(scry_items_per_player),
+        "scry_hero_probability": float(scry_hero_probability),
         "coverage": [
             {
                 "item_class": item_class,
@@ -322,6 +385,10 @@ def collect_dataset_parallel(
     death_weight,
     score_weight,
     force_survival,
+    focus_items,
+    record_focus_only,
+    scry_items_per_player,
+    scry_hero_probability,
     report_every,
     processes,
 ):
@@ -336,6 +403,10 @@ def collect_dataset_parallel(
             death_weight,
             score_weight,
             force_survival,
+            focus_items,
+            record_focus_only,
+            scry_items_per_player,
+            scry_hero_probability,
             report_every,
         )
     base, rest = divmod(samples, processes)
@@ -356,6 +427,10 @@ def collect_dataset_parallel(
                 death_weight,
                 score_weight,
                 force_survival,
+                focus_items,
+                record_focus_only,
+                scry_items_per_player,
+                scry_hero_probability,
                 report_every if idx == 0 else 0,
             )
         )
@@ -372,6 +447,10 @@ def collect_dataset_parallel(
         death_weight,
         score_weight,
         force_survival,
+        focus_items,
+        record_focus_only,
+        scry_items_per_player,
+        scry_hero_probability,
     )
 
 
@@ -387,6 +466,18 @@ def main():
     parser.add_argument("--death-weight", type=float, default=2.0)
     parser.add_argument("--score-weight", type=float, default=0.05)
     parser.add_argument("--no-force-survival", action="store_true")
+    parser.add_argument(
+        "--focus-items",
+        default="",
+        help="Comma-separated Python class names or display names to force-cycle instead of the full item registry.",
+    )
+    parser.add_argument(
+        "--record-focus-only",
+        action="store_true",
+        help="When --focus-items is set, advance non-focus item decisions with the rollout policy without recording counterfactual labels.",
+    )
+    parser.add_argument("--scry-items-per-player", type=int, default=0)
+    parser.add_argument("--scry-hero-probability", type=float, default=0.0)
     parser.add_argument("--processes", type=int, default=1)
     parser.add_argument("--report-every", type=int, default=5000)
     args = parser.parse_args()
@@ -406,6 +497,10 @@ def main():
         death_weight=args.death_weight,
         score_weight=args.score_weight,
         force_survival=not args.no_force_survival,
+        focus_items=[part.strip() for part in args.focus_items.split(",") if part.strip()],
+        record_focus_only=args.record_focus_only,
+        scry_items_per_player=args.scry_items_per_player,
+        scry_hero_probability=args.scry_hero_probability,
         report_every=args.report_every,
         processes=processes,
     )

@@ -93,11 +93,47 @@ while remembering that rollout generation may be CPU-bound.
 - Target hardware: one RTX 3090.
 - GPU should be used for batched model training, larger networks, and repeated
   fine-tuning runs.
-- CPU workers should generate simulator rollouts in parallel and write reusable
-  datasets to disk.
+- CPU workers may generate simulator rollouts, but only when the run has a
+  short, explicit diagnostic purpose. Do not spend another overnight CPU run on
+  broad random item data unless a prior lab proves exactly which states are
+  missing.
+- Default loop for Stage 4 is: audit -> small focused CPU lab -> 3090 training
+  sweep -> short held-out benchmark -> scale only if the candidate is winning.
+- Long CPU generation is forbidden for speculative experiments. CPU jobs should
+  be minutes-scale for labs and smoke datasets; large confirmation jobs require
+  a candidate that already passed item labs and short benchmarks.
 - Every major run must have a held-out seed range and a saved config file.
 - Do not treat a model as improved unless it beats the corrected SimuDonjon
   heuristic baseline, not a weakened wrapper.
+
+### Mechanic-Aware Priority
+
+The current item stack is build-aware, but not mechanic-aware enough. That is a
+real blocker. Many objects create advantages that are only valuable through
+future information, opponent denial, repair loops, replay tempo, discard/steal
+targets, or deck manipulation. If those advantages are not explicit in the
+state, a model cannot reliably learn to use them.
+
+Immediate Stage 4 priority:
+
+- expose scry/divination state to item activation: known upcoming cards, known
+  lethal/easy/event cards, known-card window value, and whether the current
+  item creates or manipulates that information;
+- do not maintain mechanic lists from memory. Audit `objets.py` and `heros.py`
+  for every `cartes_connues`, `_peek_prochaine_carte`, deck reorder/discard,
+  and hero information effect. `Prophete` and similar hero powers must be part
+  of the state, not treated as invisible background behavior;
+- expose other missing mechanics before more training: repair value, broken
+  item economy, opponent pile/score denial, replay/forced-pass tempo, deck
+  manipulation, medal pressure, and target-choice value;
+- train mechanic-specific candidates on the 3090, not by copying `worthit(...)`;
+- use focused item labs before broad benchmarks. If a candidate cannot beat the
+  current model on its mechanic lab, it does not get a long benchmark.
+- Add a dedicated scry-enriched benchmark mode where every player starts with
+  1-2 scry/deck/peek items, optionally with scry heroes. In that mode, the
+  learned AI must reach at least 40% winrate against corrected SimuDonjon bots
+  before the scry work is considered useful. Current promoted stack does not
+  meet this gate yet.
 
 ### Correct Baseline Requirement
 
@@ -214,6 +250,67 @@ Latest Stage 4 experimental results:
     - pairwise Q item combined: `30.34%` win, `31.97%` death;
   - diagnosis: first item-value head with a confirmed full-stack improvement,
     but still nowhere near the 60%/80% target.
+- Scry-window experiment:
+  - added a learned `choose_scry_window_action(...)` hook for `Prophete` N2 and
+    trained `scry_window_q_tanh` candidates from counterfactual terminal-value
+    labels;
+  - best offline candidate on `datasets/scry_prophete_v2_500_current.npz`
+    beat the old Prophete fallback on that dataset (`48.8%` oracle agreement
+    vs `36.8%`, regret `2.67` vs `3.02`);
+  - held-out scry-enriched benchmark rejected the candidate: base combined
+    policy `30.90%` win vs scry-window candidate `26.24%` over 800 benchmark
+    games with 2 scry items/player and 75% scry hero probability;
+  - diagnosis: the model learned some local Prophete discard/order signal, but
+    it did not improve full-game winrate. Do not promote it. The next scry work
+    needs broader state/action value learning and not just a small Prophete
+    window classifier.
+- Joint `Q(state, action)` first pass:
+  - added shared feature/runtime scaffolding for item activation and scry-window
+    decisions: `policies/joint_features.py`, `joint_decision_env.py`,
+    `generate_joint_value_dataset.py`, and `train_joint_decision_q.py`;
+  - smoke path works end to end: generate mixed counterfactual labels, train on
+    CUDA, load `jointq:` policies in `bench_flee_stage1.py`;
+  - full item-control candidate is rejected: `joint_q_prophete_300_rank_policy`
+    and calibrated variant under-use or mis-use combat items and collapse
+    winrate (`~13-14%` in 200-game scry-enriched tests);
+  - cautious scry-only use is not rejected yet but not proven:
+    base combined `26.65%` vs base item + joint scry `29.31%` over 200 games
+    with 2 scry items/player and 100% N2 scry hero probability;
+  - diagnosis: the architecture direction is right, but 300 decisions are not
+    enough and item-control needs regret-aware calibration. Do not promote a
+    joint model until it wins a larger held-out benchmark and does not degrade
+    item hook use rates.
+- Scry-window conservative candidate:
+  - generated a focused Prophete N2 low-PV curriculum with stronger scry action
+    coverage, then trained `scry_prophete_mix_800_policy.json`;
+  - raw scry replacement still lost full-game winrate, so runtime support now
+    allows a fallback margin: the model overrides the baseline only when its Q
+    margin over the baseline action is high enough;
+  - selected `scry_prophete_mix_800_override15_policy.json` and copied it to
+    `scry_window_policy.json`;
+  - 1000-game scry-enriched confirmation, base combined vs conservative scry:
+    base `27.02%` win, `39.13%` death; conservative scry `29.26%` win,
+    `35.97%` death;
+  - 500-game corrected-SimuDonjon comparison in the same scry-enriched mode:
+    `ev` `22.98%`, base combined `30.28%`, conservative scry `31.06%`;
+  - diagnosis: this is the first scry candidate that improves held-out winrate
+    without taking over item activation. It is usable as a cautious scry head,
+    but it is not the 40% scry-mode gate and not the final item solution.
+- 20k scry-mode retest:
+  - `scry_window_policy.json` did not hold up at 20k scale:
+    base combined `29.79%` win, `33.10%` death; scry-window candidate
+    `29.61%` win, `34.35%` death;
+  - threshold variants and known-card guard were also rejected or ambiguous;
+  - best current experimental variant combines the base item head with
+    `item_q_v4_scry_rank_a.json` only for scry/deck item classes plus
+    `scry_prophete_mix_800_override10_policy.json` for Prophete scry-window;
+  - 20k confirmation for that hybrid:
+    base combined `27.95%` win, `37.04%` death; hybrid+scry `28.26%` win,
+    `37.99%` death;
+  - diagnosis: there is a small positive winrate signal, but it is not
+    statistically decisive and death rate is worse. Do not promote as solved.
+    The next improvement needs better item value labels, not more threshold
+    tuning.
 - Item/hook specialist experiment:
   - runtime support exists for specialist Q heads keyed by exact
     `ItemPythonClass|hook`;

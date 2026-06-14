@@ -133,6 +133,49 @@ def evaluate_model(model, x, y, label, weight, device, batch_size):
     }
 
 
+def predict_pair(model, x, device, batch_size):
+    model.eval()
+    loader = DataLoader(TensorDataset(torch.tensor(x, dtype=torch.float32)), batch_size=batch_size, shuffle=False)
+    pred0 = []
+    pred1 = []
+    with torch.no_grad():
+        for (obs,) in loader:
+            obs = obs.to(device)
+            q0, q1 = model.forward_pair(obs)
+            pred0.append(q0.detach().cpu().numpy())
+            pred1.append(q1.detach().cpu().numpy())
+    model.train()
+    return np.concatenate(pred0), np.concatenate(pred1)
+
+
+def calibrate_use_bias(model, x, y, device, batch_size):
+    pred0, pred1 = predict_pair(model, x, device, batch_size)
+    margins = pred0 - pred1
+    candidates = np.unique(np.quantile(margins, np.linspace(0.0, 1.0, 401))).astype(np.float32)
+    candidates = np.concatenate([candidates, np.asarray([0.0], dtype=np.float32)])
+    best_bias = 0.0
+    best_regret = float("inf")
+    best_use = 0.0
+    best_acc = 0.0
+    oracle = y[:, 1] > y[:, 0]
+    best = np.maximum(y[:, 0], y[:, 1])
+    for bias in candidates:
+        use = (pred1 + bias) > pred0
+        chosen = np.where(use, y[:, 1], y[:, 0])
+        regret = float(np.mean(best - chosen))
+        if regret < best_regret:
+            best_regret = regret
+            best_bias = float(bias)
+            best_use = float(np.mean(use))
+            best_acc = float(np.mean(use == oracle))
+    return {
+        "q_use_bias": best_bias,
+        "calibrated_regret": best_regret,
+        "calibrated_use_rate": best_use,
+        "calibrated_accuracy": best_acc,
+    }
+
+
 def train_model(x, y, label, weight, epochs, lr, seed, hidden_sizes, batch_size, device, val_split, weight_decay, rank_weight):
     torch.manual_seed(seed)
     split = split_train_val(x, y, label, weight, val_split, seed)
@@ -227,6 +270,7 @@ def main():
     parser.add_argument("--min-abs-delta", type=float, default=0.0)
     parser.add_argument("--val-split", type=float, default=0.1)
     parser.add_argument("--target-scale", default="standard", choices=("none", "standard"))
+    parser.add_argument("--calibrate-use-bias", action="store_true")
     parser.add_argument("--seed", type=int, default=14000000)
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
     parser.add_argument("--out", default="item_q_pairwise_policy.json")
@@ -275,6 +319,14 @@ def main():
         "device": str(device),
         "force_survival": True,
     }
+    if args.calibrate_use_bias:
+        calibration = calibrate_use_bias(model, x, y, device, args.batch_size)
+        metadata.update(calibration)
+        print(
+            "calibrated q_use_bias="
+            f"{calibration['q_use_bias']:.4f} regret={calibration['calibrated_regret']:.4f} "
+            f"acc={calibration['calibrated_accuracy']:.3f} use={calibration['calibrated_use_rate']:.3f}"
+        )
     save_policy(model, args.out, hidden_sizes, metadata, x.shape[1])
     print(f"wrote {args.out}: decisions={len(label)}")
 

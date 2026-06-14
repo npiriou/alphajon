@@ -56,10 +56,11 @@ class FleeEnv:
     action_space_n = 2
     observation_shape = (observation_size(),)
 
-    def __init__(self, nb_joueurs=4, controlled_seat=0, pv_min_fuite=6):
+    def __init__(self, nb_joueurs=4, controlled_seat=0, pv_min_fuite=6, opponent_policy_sampler=None):
         self.nb_joueurs = nb_joueurs
         self.controlled_seat = controlled_seat
         self.pv_min_fuite = pv_min_fuite
+        self.opponent_policy_sampler = opponent_policy_sampler
         self.seed_value = None
         self._actions = []
         self.last_obs = np.zeros(self.observation_shape, dtype=np.float32)
@@ -99,9 +100,16 @@ class FleeEnv:
                 objets_simu.remove(obj)
             joueur = Joueur(nom, persos[i], objs)
             joueur.politique_fuite = "ev"
-            joueur.policy = _ReplayControlledPolicy(self) if i == self.controlled_seat else HeuristicPolicy("ev")
+            joueur.policy = _ReplayControlledPolicy(self) if i == self.controlled_seat else self._sample_opponent_policy()
             joueurs.append(joueur)
         return joueurs, objets_simu
+
+    def _sample_opponent_policy(self):
+        if self.opponent_policy_sampler is None:
+            return HeuristicPolicy("ev")
+        if hasattr(self.opponent_policy_sampler, "sample"):
+            return self.opponent_policy_sampler.sample()
+        return self.opponent_policy_sampler()
 
     def _replay(self):
         joueurs, objets_simu = self._build_game()

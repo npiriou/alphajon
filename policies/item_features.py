@@ -8,9 +8,12 @@ LEGACY_ITEM_BUCKETS = 64
 ITEM_CLASS_BUCKETS = 320
 HOOK_BUCKETS = 8
 ITEM_EXTRA_FEATURES = 19
-ITEM_BUILD_FEATURES = ITEM_CLASS_BUCKETS * 5 + 8
+V3_ITEM_BUILD_FEATURES = ITEM_CLASS_BUCKETS * 5 + 8
+ITEM_MECHANIC_FEATURES = 49
+ITEM_BUILD_FEATURES = V3_ITEM_BUILD_FEATURES + ITEM_MECHANIC_FEATURES
 LEGACY_ITEM_EXTRA_FEATURES = 15
-FEATURE_VERSION = "item_activation_v3"
+FEATURE_VERSION = "item_activation_v4"
+V3_FEATURE_VERSION = "item_activation_v3"
 V2_FEATURE_VERSION = "item_activation_v2"
 LEGACY_FEATURE_VERSION = "item_activation_legacy"
 HOOK_ORDER = {
@@ -21,6 +24,85 @@ HOOK_ORDER = {
     "fin_tour": 4,
     "en_vaincu": 5,
     "en_subit_dommages": 6,
+}
+
+SCRY_ITEM_CLASSES = {
+    "PommeDAdam",
+    "BouleDeCristal",
+    "BinoclesDeLInventeur",
+    "CleDeSalomon",
+    "CompasDuCapitaine",
+    "FilDuDestin",
+    "JournalDuFutur",
+    "MiroirDeYata",
+    "OeilDHorus",
+    "OiseauDeMauvaisAugure",
+}
+
+PEEK_COMBO_ITEM_CLASSES = {
+    "CapeDInvisibilite",
+    "GriffesEclair",
+    "HacheMystique",
+    "PistoletLaser",
+}
+
+DECK_MANIPULATION_ITEM_CLASSES = {
+    "AnneauDuVent",
+    "BananeExperimentale",
+    "BottesDePoncage",
+    "CapeDInvisibilite",
+    "ClocheDuDejaVu",
+    "CouteauxDeLancer",
+    "FilDuDestin",
+    "HacheMystique",
+    "LanterneAbsorbante",
+    "OeilDHorus",
+    "OiseauDeMauvaisAugure",
+    "PierreDePressentiment",
+    "PommeDAdam",
+    "TambourDeKui",
+    "VoileDIsis",
+}
+
+REPAIR_ITEM_CLASSES = {
+    "BouclierDragon",
+    "CleAmulette",
+    "CoffreAnime",
+    "CouteauSuisse",
+    "GantsDeGaia",
+    "Paratonnerre",
+    "PierreDePressentiment",
+    "PotionFeerique",
+    "YoYoProtecteur",
+}
+
+STEAL_OR_DENIAL_ITEM_CLASSES = {
+    "CarapaceBleue",
+    "CorneDAbordage",
+    "CraneDuRoiLiche",
+    "DagueDeBrutus",
+    "EnclumeInstable",
+    "EspritDuDonjon",
+    "EventailMaudit",
+    "FouetDuFourbe",
+    "ParfumRegenerant",
+    "SiegeDeTroie",
+}
+
+REPLAY_OR_TEMPO_ITEM_CLASSES = {
+    "BotteDePandore",
+    "BoomerangMystique",
+    "ChapeauDuNovice",
+    "CouteauQuiTombe",
+    "GriffesEclair",
+    "PierreDePressentiment",
+    "PlanPresqueParfait",
+    "TronconneuseEnflammee",
+}
+
+SCRY_HERO_CLASSES = {
+    "Prophete",
+    "LapinBlanc",
 }
 
 
@@ -72,6 +154,113 @@ def _common_item_features(joueur, item, card, hook):
         1.0 if getattr(card, "event", False) else 0.0,
         1.0 if getattr(card, "is_X", False) else 0.0,
         1.0 if hook == "en_combat" else 0.0,
+    ]
+
+
+def _remaining_cards(jeu):
+    donjon = jeu.donjon
+    return [donjon.cartes[i] for i in donjon.ordre[donjon.index:]]
+
+
+def _known_window_features(joueur, jeu, max_cards=4):
+    cards = _remaining_cards(jeu)
+    known_cards = getattr(joueur, "cartes_connues", set())
+    window = cards[:max_cards]
+    features = []
+    known_count = 0
+    known_lethal = 0
+    known_easy = 0
+    known_event = 0
+    known_danger_sum = 0.0
+    known_best = 0.0
+    known_worst = 0.0
+
+    for card in window:
+        known = card in known_cards
+        is_event = bool(getattr(card, "event", False))
+        power = 0.0 if is_event else float(getattr(card, "puissance_initiale", getattr(card, "puissance", 0)))
+        lethal = bool((not is_event) and joueur._degats_attendus(card, jeu) >= joueur.pv_total)
+        easy = bool((not is_event) and joueur.peut_executer_facilement(card))
+        danger = 0.0
+        if known:
+            known_count += 1
+            if is_event:
+                known_event += 1
+                danger = -1.0
+            else:
+                known_lethal += int(lethal)
+                known_easy += int(easy)
+                danger = power / 10.0
+                if lethal:
+                    danger += 1.0
+                if easy:
+                    danger -= 0.5
+            known_danger_sum += danger
+            known_best = min(known_best, danger)
+            known_worst = max(known_worst, danger)
+        features.extend([
+            1.0 if known else 0.0,
+            1.0 if known and is_event else 0.0,
+            power / 10.0 if known and not is_event else 0.0,
+            1.0 if known and lethal else 0.0,
+            1.0 if known and easy else 0.0,
+        ])
+
+    missing = max_cards - len(window)
+    if missing > 0:
+        features.extend([0.0] * missing * 5)
+
+    denom = max(1, len(window))
+    known_denom = max(1, known_count)
+    features.extend([
+        known_count / float(max_cards),
+        known_lethal / float(known_denom),
+        known_easy / float(known_denom),
+        known_event / float(known_denom),
+        known_danger_sum / float(known_denom),
+        known_best,
+        known_worst,
+        1.0 if cards and cards[0] in known_cards else 0.0,
+        len(cards) / 60.0,
+        len(window) / float(max_cards),
+        sum(1 for c in cards[:8] if c in known_cards) / 8.0,
+        denom / float(max_cards),
+    ])
+    return features
+
+
+def _mechanic_features(joueur, jeu, item, hook):
+    cls_name = type(item).__name__
+    hero_cls = type(getattr(joueur, "perso_obj", None)).__name__
+    hero_level = int(getattr(getattr(joueur, "perso_obj", None), "level", 1))
+    opponents = [j for j in getattr(jeu, "joueurs", []) if j is not joueur]
+    opponent_scores = [j._score_rapide() for j in opponents if getattr(j, "vivant", False)]
+    opponent_best = max(opponent_scores, default=0)
+    own_score = joueur._score_rapide()
+    broken_items = sum(1 for obj in getattr(joueur, "objets", []) if not getattr(obj, "intact", False))
+    opponent_pile = sum(len(getattr(j, "pile_monstres_vaincus", [])) for j in opponents)
+    opponents_in_dungeon = sum(1 for j in opponents if getattr(j, "dans_le_dj", False))
+    own_pile = len(getattr(joueur, "pile_monstres_vaincus", []))
+    score_gap = own_score - opponent_best
+
+    return _known_window_features(joueur, jeu) + [
+        1.0 if cls_name in SCRY_ITEM_CLASSES else 0.0,
+        1.0 if cls_name in PEEK_COMBO_ITEM_CLASSES else 0.0,
+        1.0 if cls_name in DECK_MANIPULATION_ITEM_CLASSES else 0.0,
+        1.0 if cls_name in REPAIR_ITEM_CLASSES else 0.0,
+        1.0 if cls_name in STEAL_OR_DENIAL_ITEM_CLASSES else 0.0,
+        1.0 if cls_name in REPLAY_OR_TEMPO_ITEM_CLASSES else 0.0,
+        1.0 if hero_cls in SCRY_HERO_CLASSES else 0.0,
+        1.0 if hero_cls == "Prophete" else 0.0,
+        1.0 if hero_cls == "LapinBlanc" else 0.0,
+        hero_level / 2.0,
+        1.0 if hook in ("debut_tour", "fin_tour", "en_vaincu", "en_subit_dommages") else 0.0,
+        broken_items / 6.0,
+        opponent_pile / 30.0,
+        opponents_in_dungeon / max(1.0, float(len(opponents))),
+        own_pile / 30.0,
+        score_gap / 30.0,
+        1.0 if score_gap < 0 else 0.0,
     ]
 
 
@@ -151,6 +340,13 @@ def extract_item_activation_observation_v2(joueur, jeu, item, card, hook):
 def extract_item_activation_observation(joueur, jeu, item, card, hook):
     v2 = extract_item_activation_observation_v2(joueur, jeu, item, card, hook).tolist()
     build_features = _build_context_features(joueur, jeu, item)
+    mechanic_features = _mechanic_features(joueur, jeu, item, hook)
+    return np.asarray(v2 + build_features + mechanic_features, dtype=np.float32)
+
+
+def extract_item_activation_observation_v3(joueur, jeu, item, card, hook):
+    v2 = extract_item_activation_observation_v2(joueur, jeu, item, card, hook).tolist()
+    build_features = _build_context_features(joueur, jeu, item)
     return np.asarray(v2 + build_features, dtype=np.float32)
 
 
@@ -164,3 +360,7 @@ def v2_observation_size():
 
 def observation_size():
     return v2_observation_size() + ITEM_BUILD_FEATURES
+
+
+def v3_observation_size():
+    return v2_observation_size() + V3_ITEM_BUILD_FEATURES

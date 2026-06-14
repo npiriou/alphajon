@@ -10,11 +10,22 @@ from heros import persos_disponibles
 from joueurs import Joueur
 from monstres import DonjonDeck
 from objets import objets_disponibles
+from policies.item_features import (
+    DECK_MANIPULATION_ITEM_CLASSES,
+    PEEK_COMBO_ITEM_CLASSES,
+    SCRY_HERO_CLASSES,
+    SCRY_ITEM_CLASSES,
+)
 from policies import (
     HeuristicPolicy,
+    KnownCardGuardFleePolicy,
+    KnownCardGuardReplayPolicy,
     CombinedPolicy,
     NumpyBreakPolicy,
+    HybridScryItemActivationPolicy,
     NumpyItemActivationPolicy,
+    NumpyJointDecisionPolicy,
+    NumpyScryWindowPolicy,
     ModelPolicy,
     NumpyPPOFleePolicy,
     NumpyReplayPolicy,
@@ -25,6 +36,7 @@ from simu import ordonnanceur
 
 _WORKER_POLICY_NAMES = None
 _WORKER_POLICY_CACHE = None
+SCRY_BENCH_ITEM_CLASSES = SCRY_ITEM_CLASSES | PEEK_COMBO_ITEM_CLASSES | DECK_MANIPULATION_ITEM_CLASSES
 
 
 def make_policy(name):
@@ -44,16 +56,72 @@ def make_policy(name):
         return NumpyBreakPolicy(name.split(":", 1)[1])
     if name.startswith("itemmodel:"):
         return NumpyItemActivationPolicy(name.split(":", 1)[1])
+    if name.startswith("hybriditem:"):
+        base_path, scry_path = name.split(":", 1)[1].split("+", 1)
+        return HybridScryItemActivationPolicy(base_path, scry_path)
+    if name.startswith("scrywindow:"):
+        return NumpyScryWindowPolicy(name.split(":", 1)[1])
+    if name.startswith("jointq:"):
+        return NumpyJointDecisionPolicy(name.split(":", 1)[1])
     if name.startswith("combined:"):
         parts = name.split(":", 1)[1].split(",")
-        if len(parts) not in (3, 4):
-            raise ValueError("combined policy must be combined:flee_path,replay_path,break_path[,item_path]")
+        if len(parts) not in (3, 4, 5):
+            raise ValueError("combined policy must be combined:flee_path,replay_path,break_path[,item_path[,scry_path]]")
         flee_path, replay_path, break_path = parts[:3]
-        item_policy = NumpyItemActivationPolicy(parts[3]) if len(parts) == 4 else None
+        item_policy = None
+        if len(parts) == 4:
+            item_spec = parts[3]
+            if item_spec.startswith("hybriditem:"):
+                base_path, scry_path = item_spec.split(":", 1)[1].split("+", 1)
+                item_policy = HybridScryItemActivationPolicy(base_path, scry_path)
+            elif item_spec.startswith("jointq:"):
+                item_policy = NumpyJointDecisionPolicy(item_spec.split(":", 1)[1])
+            else:
+                item_policy = NumpyItemActivationPolicy(item_spec)
+        scry_policy = None
+        if len(parts) == 5:
+            scry_spec = parts[4]
+            if scry_spec.startswith("jointq:"):
+                scry_policy = NumpyJointDecisionPolicy(scry_spec.split(":", 1)[1])
+            else:
+                scry_policy = NumpyScryWindowPolicy(scry_spec)
         return CombinedPolicy(
             flee_policy=NumpyPPOFleePolicy(flee_path),
             replay_policy=NumpyReplayPolicy(replay_path),
             break_policy=NumpyBreakPolicy(break_path),
+            item_policy=item_policy,
+            scry_policy=scry_policy,
+        )
+    if name.startswith("combinedknownguard:"):
+        parts = name.split(":", 1)[1].split(",")
+        if len(parts) not in (3, 4, 5):
+            raise ValueError("combinedknownguard policy must be combinedknownguard:flee_path,replay_path,break_path[,item_path[,scry_path]]")
+        flee_path, replay_path, break_path = parts[:3]
+        flee = KnownCardGuardFleePolicy(NumpyPPOFleePolicy(flee_path))
+        replay = KnownCardGuardReplayPolicy(NumpyReplayPolicy(replay_path, flee_policy=flee))
+        break_policy = NumpyBreakPolicy(break_path, flee_policy=flee, replay_policy=replay)
+        item_policy = NumpyItemActivationPolicy(parts[3], flee_policy=flee, replay_policy=replay, break_policy=break_policy) if len(parts) >= 4 else None
+        scry_policy = NumpyScryWindowPolicy(parts[4]) if len(parts) == 5 else None
+        return CombinedPolicy(
+            flee_policy=flee,
+            replay_policy=replay,
+            break_policy=break_policy,
+            item_policy=item_policy,
+            scry_policy=scry_policy,
+        )
+    if name.startswith("combinedevflee:"):
+        parts = name.split(":", 1)[1].split(",")
+        if len(parts) not in (2, 3):
+            raise ValueError("combinedevflee policy must be combinedevflee:replay_path,break_path[,item_path]")
+        replay_path, break_path = parts[:2]
+        flee = HeuristicPolicy("ev")
+        replay = NumpyReplayPolicy(replay_path, flee_policy=flee)
+        break_policy = NumpyBreakPolicy(break_path, flee_policy=flee, replay_policy=replay)
+        item_policy = NumpyItemActivationPolicy(parts[2], flee_policy=flee, replay_policy=replay, break_policy=break_policy) if len(parts) == 3 else None
+        return CombinedPolicy(
+            flee_policy=flee,
+            replay_policy=replay,
+            break_policy=break_policy,
             item_policy=item_policy,
         )
     if name.startswith("ppo:"):
@@ -87,7 +155,48 @@ def empty_stats(policy_names):
     }
 
 
-def _run_benchmark_with_cache(policy_names, games, seed_start, policy_cache, game_offset=0):
+def _choose_players_for_benchmark(nb_joueurs, objets_simu, scry_items_per_player, scry_hero_probability):
+    persos_pool = list(persos_disponibles)
+    persos = []
+    for _ in range(nb_joueurs):
+        scry_heroes = [
+            p for p in persos_pool
+            if type(p).__name__ in SCRY_HERO_CLASSES and getattr(p, "level", 1) == 2
+        ]
+        if scry_heroes and random.random() < scry_hero_probability:
+            perso = random.choice(scry_heroes)
+        else:
+            perso = random.choice(persos_pool)
+        persos_pool.remove(perso)
+        persos.append(perso)
+
+    object_sets = []
+    for _ in range(nb_joueurs):
+        objs = []
+        for _ in range(max(0, min(int(scry_items_per_player), 6))):
+            candidates = [obj for obj in objets_simu if type(obj).__name__ in SCRY_BENCH_ITEM_CLASSES]
+            if not candidates:
+                break
+            chosen = random.choice(candidates)
+            objs.append(chosen)
+            objets_simu.remove(chosen)
+        sampled = random.sample(objets_simu, 6 - len(objs))
+        objs.extend(sampled)
+        for obj in sampled:
+            objets_simu.remove(obj)
+        object_sets.append(objs)
+    return persos, object_sets
+
+
+def _run_benchmark_with_cache(
+    policy_names,
+    games,
+    seed_start,
+    policy_cache,
+    game_offset=0,
+    scry_items_per_player=0,
+    scry_hero_probability=0.0,
+):
     stats = empty_stats(policy_names)
     for game_idx in range(games):
         seed = seed_start + game_idx
@@ -98,15 +207,15 @@ def _run_benchmark_with_cache(policy_names, games, seed_start, policy_cache, gam
             obj.repare()
         nb_joueurs = random.choice([3, 4])
         noms = ["Sagarex", "Francis", "Mastho", "Mr.Adam"][:nb_joueurs]
-        persos = random.sample(persos_disponibles, nb_joueurs)
+        persos, object_sets = _choose_players_for_benchmark(
+            nb_joueurs, objets_simu, scry_items_per_player, scry_hero_probability
+        )
         offset = (game_offset + game_idx) % len(policy_names)
         assigned = [policy_names[(offset + i) % len(policy_names)] for i in range(nb_joueurs)]
         random.shuffle(assigned)
         joueurs = []
         for i, nom in enumerate(noms):
-            objs = random.sample(objets_simu, 6)
-            for obj in objs:
-                objets_simu.remove(obj)
+            objs = object_sets[i]
             j = Joueur(nom, persos[i], objs)
             j.policy_name = assigned[i]
             j.policy = policy_cache[assigned[i]]
@@ -134,9 +243,14 @@ def _run_benchmark_with_cache(policy_names, games, seed_start, policy_cache, gam
     return stats
 
 
-def run_benchmark(policy_names, games, seed_start):
+def run_benchmark(policy_names, games, seed_start, scry_items_per_player=0, scry_hero_probability=0.0):
     return _run_benchmark_with_cache(
-        policy_names, games, seed_start, make_policy_cache(policy_names)
+        policy_names,
+        games,
+        seed_start,
+        make_policy_cache(policy_names),
+        scry_items_per_player=scry_items_per_player,
+        scry_hero_probability=scry_hero_probability,
     )
 
 
@@ -160,15 +274,21 @@ def _init_worker(policy_names):
 
 
 def _batch(args):
-    games, seed_start, game_offset = args
+    games, seed_start, game_offset, scry_items_per_player, scry_hero_probability = args
     return _run_benchmark_with_cache(
-        _WORKER_POLICY_NAMES, games, seed_start, _WORKER_POLICY_CACHE, game_offset
+        _WORKER_POLICY_NAMES,
+        games,
+        seed_start,
+        _WORKER_POLICY_CACHE,
+        game_offset,
+        scry_items_per_player,
+        scry_hero_probability,
     )
 
 
-def run_benchmark_parallel(policy_names, games, seed_start, processes):
+def run_benchmark_parallel(policy_names, games, seed_start, processes, scry_items_per_player=0, scry_hero_probability=0.0):
     if processes <= 1 or games <= 1:
-        return run_benchmark(policy_names, games, seed_start)
+        return run_benchmark(policy_names, games, seed_start, scry_items_per_player, scry_hero_probability)
 
     batches = min(processes * 4, games)
     base, rest = divmod(games, batches)
@@ -178,7 +298,7 @@ def run_benchmark_parallel(policy_names, games, seed_start, processes):
         count = base + (1 if i < rest else 0)
         if count <= 0:
             continue
-        jobs.append((count, seed_start + offset, offset))
+        jobs.append((count, seed_start + offset, offset, scry_items_per_player, scry_hero_probability))
         offset += count
 
     stats = empty_stats(policy_names)
@@ -229,6 +349,9 @@ def main():
     parser.add_argument("--games", type=int, default=500)
     parser.add_argument("--seed-start", type=int, default=200000)
     parser.add_argument("--processes", type=int, default=1)
+    parser.add_argument("--scry-items-per-player", type=int, default=0)
+    parser.add_argument("--scry-hero-probability", type=float, default=0.0)
+    parser.add_argument("--required-winrate", type=float, default=None)
     parser.add_argument(
         "--policies",
         nargs="+",
@@ -239,8 +362,25 @@ def main():
     processes = args.processes
     if processes == 0:
         processes = max(1, (os.cpu_count() or 2) - 1)
-    stats = run_benchmark_parallel(args.policies, args.games, args.seed_start, processes)
+    stats = run_benchmark_parallel(
+        args.policies,
+        args.games,
+        args.seed_start,
+        processes,
+        args.scry_items_per_player,
+        args.scry_hero_probability,
+    )
     print_stats(stats)
+    if args.required_winrate is not None:
+        failed = []
+        for name, s in stats.items():
+            winrate = s["win"] / max(1, s["played"]) * 100.0
+            if winrate < args.required_winrate:
+                failed.append((name, winrate))
+        if failed:
+            for name, winrate in failed:
+                print(f"FAILED required winrate {args.required_winrate:.2f}%: {name} got {winrate:.2f}%")
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

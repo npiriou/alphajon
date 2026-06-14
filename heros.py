@@ -389,14 +389,34 @@ class Prophete(Perso):
         if self.level == 2 and self.compteur < 2 and joueur.pv_total <= 4 and not Jeu.donjon.vide:
             self.compteur += 1
             log_details.append(f"{joueur.nom} ({self.nom}) consulte les 2 prochaines cartes du Donjon ({self.compteur}/2).")
-            a_reposer = []
+            apercues = []
             for _ in range(2):
                 if Jeu.donjon.vide:
                     break
-                c = Jeu.donjon.prochaine_carte()
-                if hasattr(c, 'types') and not getattr(c, 'event', False) and c.puissance >= joueur.pv_total:
+                apercues.append(Jeu.donjon.prochaine_carte())
+            legal_actions = tuple(range(1 << len(apercues)))
+            policy = getattr(joueur, 'policy', None)
+            if policy is not None:
+                action = int(policy.choose_scry_window_action({
+                    'player': joueur,
+                    'game': Jeu,
+                    'hero': self,
+                    'cards': apercues,
+                    'source': 'Prophete',
+                    'log_details': log_details,
+                }, legal_actions))
+            else:
+                action = 0
+                for idx, c in enumerate(apercues):
+                    if hasattr(c, 'types') and not getattr(c, 'event', False) and c.puissance >= joueur.pv_total:
+                        action |= 1 << idx
+            if action not in legal_actions:
+                action = 0
+            a_reposer = []
+            for idx, c in enumerate(apercues):
+                if action & (1 << idx):
                     Jeu.defausse.append(c)
-                    log_details.append(f"{joueur.nom} ({self.nom}) défausse {c.titre} (trop dangereux).")
+                    log_details.append(f"{joueur.nom} ({self.nom}) défausse {c.titre}.")
                 else:
                     a_reposer.append(c)
             for c in reversed(a_reposer):

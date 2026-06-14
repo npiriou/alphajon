@@ -214,6 +214,14 @@ Latest Stage 4 experimental results:
     - pairwise Q item combined: `30.34%` win, `31.97%` death;
   - diagnosis: first item-value head with a confirmed full-stack improvement,
     but still nowhere near the 60%/80% target.
+- Item/hook specialist experiment:
+  - runtime support exists for specialist Q heads keyed by exact
+    `ItemPythonClass|hook`;
+  - first top-12 specialist run was rejected:
+    - promoted pairwise Q item stack: `28.76%` win, `35.26%` death;
+    - specialist-12 candidate: `27.65%` win, `37.81%` death;
+  - diagnosis: direct fitting on the same noisy value dataset overfits. Future
+    specialists need item-specific scenario generation and held-out item labs.
 
 Stage 4 next direction:
 
@@ -226,6 +234,10 @@ Stage 4 next direction:
   build for human-like decisions.
 - Add per-item reports that show which objects are helped or harmed by the new
   policy before running broad promotion benchmarks.
+- Build item-specific labs for high-regret objects instead of only training on
+  generic random rollouts. Each lab should include use-now, hold-for-later,
+  combo, opponent-pressure, and redundant-coverage scenarios for that exact
+  object.
 - Continue using the promoted imitation item model as the runtime fallback until
   a value/RL candidate wins held-out benchmarks.
 

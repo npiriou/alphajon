@@ -345,6 +345,19 @@ class NumpyItemActivationPolicy(GamePolicy):
         metadata = payload.get("metadata", {})
         self.force_survival = bool(metadata.get("force_survival", self.model_type == "item_activation_q_tanh"))
         self.q_use_bias = float(metadata.get("q_use_bias", 0.0))
+        self.item_hook_specialists = {}
+        for key, specialist in metadata.get("item_hook_specialists", {}).items():
+            self.item_hook_specialists[key] = {
+                "layers": [
+                    (
+                        np.asarray(layer["weight"], dtype=np.float32),
+                        np.asarray(layer["bias"], dtype=np.float32),
+                    )
+                    for layer in specialist["policy_layers"]
+                ],
+                "q_weight": np.asarray(specialist["q_weight"], dtype=np.float32),
+                "q_bias": np.asarray(specialist["q_bias"], dtype=np.float32),
+            }
         self.flee_policy = flee_policy or HeuristicPolicy("ev")
         self.replay_policy = replay_policy or HeuristicPolicy("ev")
         self.break_policy = break_policy or HeuristicPolicy("ev")
@@ -387,15 +400,21 @@ class NumpyItemActivationPolicy(GamePolicy):
             state["player"], state["game"], state["item"], state["card"], state.get("hook", "")
         )
         if self.model_type == "item_activation_q_tanh":
+            item_class = type(state["item"]).__name__
+            hook = state.get("hook", "")
+            specialist = self.item_hook_specialists.get(f"{item_class}|{hook}")
             values = {}
             for action in legal_actions:
                 if int(action) not in (0, 1):
                     continue
                 action_features = np.asarray([1.0 if int(action) == 0 else 0.0, 1.0 if int(action) == 1 else 0.0])
                 qx = np.concatenate([x, action_features]).astype(np.float32)
-                for weight, bias in self.layers:
+                layers = specialist["layers"] if specialist is not None else self.layers
+                action_weight = specialist["q_weight"] if specialist is not None else self.action_weight
+                action_bias = specialist["q_bias"] if specialist is not None else self.action_bias
+                for weight, bias in layers:
                     qx = np.tanh(weight @ qx + bias)
-                value = float((self.action_weight @ qx + self.action_bias).reshape(-1)[0])
+                value = float((action_weight @ qx + action_bias).reshape(-1)[0])
                 if int(action) == 1:
                     value += self.q_use_bias
                 values[int(action)] = value

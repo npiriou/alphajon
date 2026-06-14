@@ -171,6 +171,34 @@ Item hooks:
 Result: promoted. This is the first item-value head that clearly improves
 full-stack winrate and death rate over the v2 imitation item model.
 
+### Rejected Item/Hook Specialists
+
+The next experiment added small specialist Q heads for the 12 highest-regret
+`item_class|hook` groups from `datasets/item_value_v3_500k_current.npz`.
+This is directionally closer to item-specific play, but the first version
+overfit the noisy counterfactual dataset and regressed in live simulation.
+
+Training:
+
+```bash
+python train_item_q_specialists.py --dataset datasets/item_value_v3_500k_current.npz --base-policy item_bc_mlp_policy.json --out item_q_v3_500k_specialists12_policy.json --top-k 12 --min-count 1000 --epochs 80 --batch-size 1024 --hidden-sizes 128,64 --lr 0.001 --rank-weight 1.0 --device cuda
+```
+
+Benchmark:
+
+```bash
+python bench_flee_stage1.py --games 40000 --processes 0 --policies "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json" "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_q_v3_500k_specialists12_policy.json"
+```
+
+| Policy | Played seats | Win% | Death% | Flee% | Clear% | Draw% | Breaks/game | Item use% | AvgScore | MedianScore |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| promoted pairwise Q item | 69,976 | 28.76 +/- 0.34 | 35.26 | 56.94 | 8.08 | 29.10 | 0.187 | 54.28 | 5.247 | 5 |
+| specialist-12 candidate | 70,005 | 27.65 +/- 0.33 | 37.81 | 54.34 | 8.19 | 29.14 | 0.195 | 53.49 | 5.046 | 4 |
+
+Diagnosis: rejected. Per-item specialists need better item-specific scenario
+generation or held-out per-item validation, not direct fitting to the same noisy
+single-rollout labels.
+
 ## Pairwise Head Ablations
 
 Each row below is from a pairwise benchmark against corrected `ev`.

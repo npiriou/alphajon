@@ -13,17 +13,24 @@ python bench_flee_stage1.py --games 80000 --processes 0 --policies ev "combined:
 
 | Policy | Played seats | Win% | Death% | Flee% | Clear% | Draw% | Breaks/game | Item use% | AvgScore | MedianScore |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| corrected SimuDonjon `ev` | 139,948 | 25.22 +/- 0.23 | 49.39 | 42.11 | 8.84 | 2.21 | 0.166 | 58.42 | 4.307 | 2 |
-| promoted combined learned | 139,941 | 30.93 +/- 0.24 | 30.99 | 63.42 | 5.93 | 29.17 | 0.237 | 56.03 | 5.526 | 5 |
+| corrected SimuDonjon `ev` | 93,337 | 24.35 +/- 0.28 | 50.46 | 40.28 | 9.56 | 2.21 | 0.157 | 59.00 | 4.218 | 1 |
+| promoted combined learned | 93,213 | 30.34 +/- 0.30 | 31.97 | 61.43 | 6.91 | 29.13 | 0.230 | 52.99 | 5.491 | 5 |
 
-Result: promoted combined learned policy is **+5.71 win-rate points** above the
+Result: promoted combined learned policy is **+5.99 win-rate points** above the
 corrected SimuDonjon `ev` baseline in this pairwise benchmark.
 
 Item hooks:
 
-- `ev`: `en_combat=965081/1671365 (57.7%)`, `en_survie=27315/27315 (100.0%)`
-- promoted combined: `en_combat=981401/1768028 (55.5%)`,
-  `en_survie=20888/20888 (100.0%)`
+- `ev`: `en_combat=642223/1101456 (58.3%)`, `en_survie=18651/18651 (100.0%)`
+- promoted combined: `en_combat=615044/1173241 (52.4%)`,
+  `en_survie=14126/14126 (100.0%)`
+
+Current promoted item head:
+
+- `item_bc_mlp_policy.json` is now a build-aware pairwise Q model:
+  `item_activation_q_tanh`, feature version `item_activation_v3`.
+- Previous v2 imitation item head is saved as
+  `item_bc_mlp_policy_v2_promoted_before_q.json`.
 
 ## Rejected Stage 4 Item Experiments
 
@@ -129,6 +136,40 @@ Diagnosis: build-aware Q is the first item value candidate that does not regress
 the full stack, but its winrate gain is too small to treat as a decisive
 promotion. The direction is correct; the remaining blocker is label quality and
 per-item variance, not just network size.
+
+### Build-Aware Pairwise Item Q
+
+The value-only Q model still overfit noisy absolute value targets. The next
+candidate trained the same Q architecture with an added pairwise/ranking loss on
+`Q(use) - Q(skip)`, selecting checkpoints by validation regret.
+
+Training:
+
+```bash
+python train_item_q_pairwise.py --dataset datasets/item_value_v3_500k_current.npz --epochs 100 --batch-size 65536 --hidden-sizes 768,512,256 --lr 0.0004 --weight-decay 0.00001 --rank-weight 0.75 --device cuda --out item_q_v3_500k_pairwise_policy.json
+```
+
+Confirmation benchmark before promotion:
+
+```bash
+python bench_flee_stage1.py --games 80000 --processes 0 --policies ev "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json" "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_q_v3_500k_pairwise_policy.json"
+```
+
+| Policy | Played seats | Win% | Death% | Flee% | Clear% | Draw% | Breaks/game | Item use% | AvgScore | MedianScore |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| corrected SimuDonjon `ev` | 93,337 | 24.35 +/- 0.28 | 50.46 | 40.28 | 9.56 | 2.21 | 0.157 | 59.00 | 4.218 | 1 |
+| previous promoted combined | 93,339 | 29.87 +/- 0.29 | 32.83 | 60.53 | 6.93 | 29.13 | 0.229 | 56.63 | 5.441 | 5 |
+| pairwise Q item candidate | 93,213 | 30.34 +/- 0.30 | 31.97 | 61.43 | 6.91 | 29.13 | 0.230 | 52.99 | 5.491 | 5 |
+
+Item hooks:
+
+- previous promoted combined: `en_combat=656703/1170763 (56.1%)`,
+  `en_survie=14621/14621 (100.0%)`
+- pairwise Q item candidate: `en_combat=615044/1173241 (52.4%)`,
+  `en_survie=14126/14126 (100.0%)`
+
+Result: promoted. This is the first item-value head that clearly improves
+full-stack winrate and death rate over the v2 imitation item model.
 
 ## Pairwise Head Ablations
 

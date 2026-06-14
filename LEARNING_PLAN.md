@@ -166,10 +166,10 @@ Current stage status:
 - Stage 2 replay: promoted PPO head is the strongest current winrate gain.
 - Stage 3 break/discard: promoted MLP is near-neutral and still mostly a
   bootstrap head.
-- Stage 4 item activation: not solved. The promoted item model remains the
-  best benchmarked option, but it is still an imitation/bootstrap model close
-  to `worthit(...)`. Counterfactual value labels and PPO tooling now exist, but
-  the first trained candidates did not beat the promoted item model.
+- Stage 4 item activation: partially improved, not solved. The promoted item
+  model is now a build-aware pairwise Q model (`item_activation_v3`) rather than
+  a pure imitation of `worthit(...)`. It improves full-stack winrate and death
+  rate over the previous v2 imitation head, but the gain is still modest.
 - Stage 5 draft: not started; blocked on stronger item play.
 - Stage 6 evening strategy: not started.
 - Stage 7 policy league/self-play: planned after decision heads can beat their
@@ -203,6 +203,17 @@ Latest Stage 4 experimental results:
     compact Q v3 stack `30.08%` win;
   - diagnosis: technically healthier and lower-death, but not a statistically
     decisive promotion yet.
+- Build-aware pairwise item Q promotion:
+  - training source: `datasets/item_value_v3_500k_current.npz`;
+  - trainer: `train_item_q_pairwise.py`;
+  - promoted model: `item_bc_mlp_policy.json`;
+  - previous v2 imitation backup: `item_bc_mlp_policy_v2_promoted_before_q.json`;
+  - confirmation benchmark:
+    - corrected SimuDonjon `ev`: `24.35%` win, `50.46%` death;
+    - previous promoted combined: `29.87%` win, `32.83%` death;
+    - pairwise Q item combined: `30.34%` win, `31.97%` death;
+  - diagnosis: first item-value head with a confirmed full-stack improvement,
+    but still nowhere near the 60%/80% target.
 
 Stage 4 next direction:
 

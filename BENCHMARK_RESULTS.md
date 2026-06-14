@@ -91,6 +91,45 @@ Item hooks:
 Diagnosis: the first PPO fine-tune pushed combat item activation too high and
 lost winrate.
 
+### Build-Aware Item Q
+
+This run addresses the main representational flaw in the earlier item models:
+`item_activation_v2` knew the current item but did not properly encode the full
+build. `item_activation_v3` adds own item class bags by intact/broken/active
+state, visible opponent item class bags, active opponent item bags, and build
+summary scalars.
+
+Training:
+
+```bash
+python generate_item_value_dataset.py --samples 500000 --seed-start 13300000 --out datasets/item_value_v3_500k_current.npz --processes 0 --rollout-policy current --forced-item-rounds 4 --win-weight 8.0 --death-weight 2.0 --score-weight 0.05
+python train_item_q_model.py --dataset datasets/item_value_v3_500k_current.npz --epochs 100 --batch-size 65536 --hidden-sizes 768,512,256 --lr 0.0004 --weight-decay 0.00001 --device cuda --out item_q_v3_500k_compact_policy.json
+```
+
+Benchmark:
+
+```bash
+python bench_flee_stage1.py --games 80000 --processes 0 --policies ev "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_bc_mlp_policy.json" "combined:flee_ppo_policy.json,replay_ppo_policy.json,break_bc_mlp_policy.json,item_q_v3_500k_compact_policy.json"
+```
+
+| Policy | Played seats | Win% | Death% | Flee% | Clear% | Draw% | Breaks/game | Item use% | AvgScore | MedianScore |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| corrected SimuDonjon `ev` | 93,337 | 24.38 +/- 0.28 | 50.52 | 40.26 | 9.52 | 2.19 | 0.156 | 58.95 | 4.209 | 1 |
+| promoted combined learned | 93,339 | 30.04 +/- 0.29 | 32.68 | 60.64 | 6.97 | 29.14 | 0.230 | 56.62 | 5.448 | 5 |
+| build-aware Q item candidate | 93,213 | 30.08 +/- 0.29 | 32.27 | 61.13 | 6.92 | 29.08 | 0.229 | 54.01 | 5.450 | 5 |
+
+Item hooks:
+
+- promoted combined: `en_combat=656055/1169844 (56.1%)`,
+  `en_survie=14613/14613 (100.0%)`
+- build-aware Q item candidate: `en_combat=630741/1179999 (53.5%)`,
+  `en_survie=14213/14213 (100.0%)`
+
+Diagnosis: build-aware Q is the first item value candidate that does not regress
+the full stack, but its winrate gain is too small to treat as a decisive
+promotion. The direction is correct; the remaining blocker is label quality and
+per-item variance, not just network size.
+
 ## Pairwise Head Ablations
 
 Each row below is from a pairwise benchmark against corrected `ev`.

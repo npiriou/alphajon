@@ -16,3 +16,9 @@ item_value*_policy.json
 item_value*_policy.zip
 item_ppo*.json
 item_ppo*.zip
+item_q*.json
+item_q*.zip
+replay_q*.json
+replay_q*.zip
+flee_tuned*_policy.json
+replay_tuned*_policy.json

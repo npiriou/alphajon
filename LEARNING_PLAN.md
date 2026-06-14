@@ -192,14 +192,27 @@ Latest Stage 4 experimental results:
   - trained model: `item_ppo_bc1m_100k_policy.json`;
   - benchmark result: worse than the promoted item model, mainly because combat
     item use became too high.
+- Build-aware item Q experiment:
+  - feature version `item_activation_v3` adds build context: own item classes by
+    intact/broken/active state, visible opponent item classes, active opponent
+    item classes, and build/score summary scalars;
+  - dataset: 500k counterfactual item decisions, exported as 1M
+    `(state, action)` Q samples;
+  - compact trained model: `item_q_v3_500k_compact_policy.json`;
+  - final 80k mixed benchmark: current promoted stack `30.04%` win,
+    compact Q v3 stack `30.08%` win;
+  - diagnosis: technically healthier and lower-death, but not a statistically
+    decisive promotion yet.
 
 Stage 4 next direction:
 
-- Do not promote either experimental item candidate.
+- Do not promote weak or statistically ambiguous item candidates.
 - Replace single-rollout action labels with multi-rollout action values per
   decision and per downstream policy.
 - Train a `Q(state, action)` value model rather than only a binary classifier,
   so the policy can express uncertainty and legal-action margins.
+- Keep the build-aware v3 representation; v2 did not expose enough of the item
+  build for human-like decisions.
 - Add per-item reports that show which objects are helped or harmed by the new
   policy before running broad promotion benchmarks.
 - Continue using the promoted imitation item model as the runtime fallback until

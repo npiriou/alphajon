@@ -22,17 +22,15 @@ class _ReplayControlledPolicy:
     def __init__(self, env):
         self.env = env
         self.index = 0
-        self.flee_policy = HeuristicPolicy("ev")
-        self.fallback = HeuristicPolicy("ev")
 
     def decide_flee(self, state, legal_actions):
-        return self.flee_policy.decide_flee(state, legal_actions)
+        return self.env.rollout_policy.decide_flee(state, legal_actions)
 
     def choose_item_to_break(self, state, legal_actions):
-        return self.fallback.choose_item_to_break(state, legal_actions)
+        return self.env.rollout_policy.choose_item_to_break(state, legal_actions)
 
     def choose_item_activation(self, state, legal_actions):
-        return self.fallback.choose_item_activation(state, legal_actions)
+        return self.env.rollout_policy.choose_item_activation(state, legal_actions)
 
     def decide_replay(self, state, legal_actions):
         if self.index < len(self.env._actions):
@@ -41,6 +39,8 @@ class _ReplayControlledPolicy:
             if action in legal_actions:
                 return action
             return REPLAY_ACTION_PASS
+        if self.env.continue_with_rollout_policy:
+            return self.env.rollout_policy.decide_replay(state, legal_actions)
         obs = extract_replay_observation(state["player"], state["game"])
         info = self.env._decision_info(state)
         raise NeedReplayAction(obs, info)
@@ -56,6 +56,8 @@ class ReplayEnv:
         self.pv_min_fuite = pv_min_fuite
         self.seed_value = None
         self._actions = []
+        self.rollout_policy = HeuristicPolicy("ev")
+        self.continue_with_rollout_policy = False
         self.last_obs = np.zeros(self.observation_shape, dtype=np.float32)
         self.last_info = {}
         self.terminal_players = None
@@ -76,6 +78,25 @@ class ReplayEnv:
         if self.terminal_players is None:
             return obs, 0.0, False, False, info
         return obs, self._reward(), True, False, info
+
+    def run_to_terminal(self, seed, actions, rollout_policy=None):
+        previous_policy = self.rollout_policy
+        previous_continue = self.continue_with_rollout_policy
+        try:
+            self.seed_value = int(seed)
+            self._actions = list(actions)
+            self.terminal_players = None
+            self.vainqueur = None
+            if rollout_policy is not None:
+                self.rollout_policy = rollout_policy
+            self.continue_with_rollout_policy = True
+            obs, info = self._replay()
+            if self.terminal_players is None:
+                raise RuntimeError("rollout policy did not resolve all replay decisions")
+            return obs, self._reward(), info
+        finally:
+            self.rollout_policy = previous_policy
+            self.continue_with_rollout_policy = previous_continue
 
     def _build_game(self):
         random.seed(self.seed_value)

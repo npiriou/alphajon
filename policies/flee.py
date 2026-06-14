@@ -9,8 +9,10 @@ from .break_features import MAX_OBJECTS, extract_break_observation, observation_
 from .item_features import (
     extract_item_activation_observation,
     extract_item_activation_observation_legacy,
+    extract_item_activation_observation_v2,
     legacy_observation_size as legacy_item_observation_size,
     observation_size as item_observation_size,
+    v2_observation_size as v2_item_observation_size,
 )
 
 FLEE_ACTION_CONTINUE = 0
@@ -227,6 +229,7 @@ class NumpyReplayPolicy(NumpyPPOFleePolicy):
     def __init__(self, model_path, flee_policy=None):
         with open(model_path, "r", encoding="utf-8") as fh:
             payload = json.load(fh)
+        self.model_type = payload.get("type", "sb3_ppo_actor_tanh")
         self.layers = [
             (
                 np.asarray(layer["weight"], dtype=np.float32),
@@ -234,13 +237,15 @@ class NumpyReplayPolicy(NumpyPPOFleePolicy):
             )
             for layer in payload["policy_layers"]
         ]
-        self.action_weight = np.asarray(payload["action_weight"], dtype=np.float32)
-        self.action_bias = np.asarray(payload["action_bias"], dtype=np.float32)
+        self.action_weight = np.asarray(payload.get("action_weight", payload.get("q_weight")), dtype=np.float32)
+        self.action_bias = np.asarray(payload.get("action_bias", payload.get("q_bias")), dtype=np.float32)
+        self.q_draw_bias = float(payload.get("metadata", {}).get("q_draw_bias", 0.0))
         self.flee_policy = flee_policy or HeuristicPolicy("ev")
-        if self.layers[0][0].shape[1] != replay_observation_size():
+        expected_input = replay_observation_size() + 2 if self.model_type == "replay_q_tanh" else replay_observation_size()
+        if self.layers[0][0].shape[1] != expected_input:
             raise ValueError(
                 f"model expects {self.layers[0][0].shape[1]} features, "
-                f"got {replay_observation_size()}"
+                f"got {expected_input}"
             )
 
     def decide_flee(self, state, legal_actions):
@@ -250,6 +255,22 @@ class NumpyReplayPolicy(NumpyPPOFleePolicy):
         if REPLAY_ACTION_DRAW not in legal_actions:
             return REPLAY_ACTION_PASS
         x = extract_replay_observation(state["player"], state["game"])
+        if self.model_type == "replay_q_tanh":
+            values = {}
+            for action in legal_actions:
+                if int(action) not in (REPLAY_ACTION_PASS, REPLAY_ACTION_DRAW):
+                    continue
+                action_features = np.asarray([1.0 if int(action) == 0 else 0.0, 1.0 if int(action) == 1 else 0.0])
+                qx = np.concatenate([x, action_features]).astype(np.float32)
+                for weight, bias in self.layers:
+                    qx = np.tanh(weight @ qx + bias)
+                value = float((self.action_weight @ qx + self.action_bias).reshape(-1)[0])
+                if int(action) == REPLAY_ACTION_DRAW:
+                    value += self.q_draw_bias
+                values[int(action)] = value
+            if values:
+                return max(values, key=values.get)
+            return REPLAY_ACTION_PASS
         for weight, bias in self.layers:
             x = np.tanh(weight @ x + bias)
         logits = self.action_weight @ x + self.action_bias
@@ -311,6 +332,7 @@ class NumpyItemActivationPolicy(GamePolicy):
     def __init__(self, model_path, flee_policy=None, replay_policy=None, break_policy=None):
         with open(model_path, "r", encoding="utf-8") as fh:
             payload = json.load(fh)
+        self.model_type = payload.get("type", "item_activation_actor_tanh")
         self.layers = [
             (
                 np.asarray(layer["weight"], dtype=np.float32),
@@ -318,20 +340,33 @@ class NumpyItemActivationPolicy(GamePolicy):
             )
             for layer in payload["policy_layers"]
         ]
-        self.action_weight = np.asarray(payload["action_weight"], dtype=np.float32)
-        self.action_bias = np.asarray(payload["action_bias"], dtype=np.float32)
+        self.action_weight = np.asarray(payload.get("action_weight", payload.get("q_weight")), dtype=np.float32)
+        self.action_bias = np.asarray(payload.get("action_bias", payload.get("q_bias")), dtype=np.float32)
+        metadata = payload.get("metadata", {})
+        self.force_survival = bool(metadata.get("force_survival", self.model_type == "item_activation_q_tanh"))
+        self.q_use_bias = float(metadata.get("q_use_bias", 0.0))
         self.flee_policy = flee_policy or HeuristicPolicy("ev")
         self.replay_policy = replay_policy or HeuristicPolicy("ev")
         self.break_policy = break_policy or HeuristicPolicy("ev")
-        self.input_size = self.layers[0][0].shape[1]
+        self.input_size = int(payload.get("observation_size", self.layers[0][0].shape[1]))
+        if self.model_type == "item_activation_q_tanh":
+            self.network_input_size = self.layers[0][0].shape[1]
+            if self.network_input_size != self.input_size + 2:
+                raise ValueError(
+                    f"Q item model expects network input {self.network_input_size}, "
+                    f"but observation_size is {self.input_size}"
+                )
         if self.input_size == item_observation_size():
             self.extract_observation = extract_item_activation_observation
+        elif self.input_size == v2_item_observation_size():
+            self.extract_observation = extract_item_activation_observation_v2
         elif self.input_size == legacy_item_observation_size():
             self.extract_observation = extract_item_activation_observation_legacy
         else:
             raise ValueError(
                 f"model expects {self.input_size} features, "
-                f"got supported sizes {legacy_item_observation_size()} or {item_observation_size()}"
+                f"got supported sizes {legacy_item_observation_size()}, "
+                f"{v2_item_observation_size()}, or {item_observation_size()}"
             )
 
     def decide_flee(self, state, legal_actions):
@@ -346,9 +381,27 @@ class NumpyItemActivationPolicy(GamePolicy):
     def choose_item_activation(self, state, legal_actions):
         if 1 not in legal_actions:
             return legal_actions[0] if legal_actions else 0
+        if self.force_survival and state.get("hook", "") == "en_survie":
+            return 1
         x = self.extract_observation(
             state["player"], state["game"], state["item"], state["card"], state.get("hook", "")
         )
+        if self.model_type == "item_activation_q_tanh":
+            values = {}
+            for action in legal_actions:
+                if int(action) not in (0, 1):
+                    continue
+                action_features = np.asarray([1.0 if int(action) == 0 else 0.0, 1.0 if int(action) == 1 else 0.0])
+                qx = np.concatenate([x, action_features]).astype(np.float32)
+                for weight, bias in self.layers:
+                    qx = np.tanh(weight @ qx + bias)
+                value = float((self.action_weight @ qx + self.action_bias).reshape(-1)[0])
+                if int(action) == 1:
+                    value += self.q_use_bias
+                values[int(action)] = value
+            if values:
+                return max(values, key=values.get)
+            return 0
         for weight, bias in self.layers:
             x = np.tanh(weight @ x + bias)
         logits = self.action_weight @ x + self.action_bias
